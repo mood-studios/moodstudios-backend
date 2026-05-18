@@ -1,0 +1,126 @@
+const Booking = require('../models/Booking');
+const Service = require('../models/Service');
+const ApiError = require('../utils/ApiError');
+const asyncHandler = require('../utils/asyncHandler');
+const { notifyBookingUpdate } = require('../services/notificationService');
+
+const calculateTotal = async (serviceIds) => {
+  const services = await Service.find({ _id: { $in: serviceIds }, isVisible: true });
+  if (services.length !== serviceIds.length) {
+    throw new ApiError(400, 'One or more services are invalid or hidden');
+  }
+  return services.reduce((sum, s) => sum + s.price, 0);
+};
+
+exports.createBooking = asyncHandler(async (req, res) => {
+  const { services, bookingDate, bookingTime, specialRequest } = req.body;
+
+  if (!services?.length) {
+    throw new ApiError(400, 'At least one service is required');
+  }
+
+  const totalAmount = await calculateTotal(services);
+
+  const booking = await Booking.create({
+    userId: req.user._id,
+    services,
+    bookingDate,
+    bookingTime,
+    specialRequest,
+    totalAmount,
+  });
+
+  const populated = await booking.populate([
+    { path: 'services', select: 'name price duration' },
+    { path: 'userId', select: 'name email phone' },
+  ]);
+
+  res.status(201).json({ success: true, data: populated });
+});
+
+exports.getMyBookings = asyncHandler(async (req, res) => {
+  const bookings = await Booking.find({ userId: req.user._id })
+    .populate('services', 'name price duration image')
+    .sort({ createdAt: -1 });
+
+  res.json({ success: true, data: bookings });
+});
+
+exports.getAllBookings = asyncHandler(async (req, res) => {
+  const { status, paymentStatus } = req.query;
+  const filter = {};
+  if (status) filter.bookingStatus = status;
+  if (paymentStatus) filter.paymentStatus = paymentStatus;
+
+  const bookings = await Booking.find(filter)
+    .populate('userId', 'name email phone')
+    .populate('services', 'name price duration')
+    .sort({ createdAt: -1 });
+
+  res.json({ success: true, data: bookings });
+});
+
+exports.getBooking = asyncHandler(async (req, res) => {
+  const booking = await Booking.findById(req.params.id)
+    .populate('userId', 'name email phone')
+    .populate('services', 'name price duration image');
+
+  if (!booking) {
+    throw new ApiError(404, 'Booking not found');
+  }
+
+  if (
+    req.user.role === 'customer' &&
+    booking.userId._id.toString() !== req.user._id.toString()
+  ) {
+    throw new ApiError(403, 'Not authorized to view this booking');
+  }
+
+  res.json({ success: true, data: booking });
+});
+
+exports.updateBookingStatus = asyncHandler(async (req, res) => {
+  const { status } = req.body;
+  const allowed = ['confirmed', 'declined', 'completed'];
+
+  if (!allowed.includes(status)) {
+    throw new ApiError(400, 'Invalid booking status');
+  }
+
+  const booking = await Booking.findById(req.params.id);
+  if (!booking) {
+    throw new ApiError(404, 'Booking not found');
+  }
+
+  booking.bookingStatus = status;
+  await booking.save();
+
+  await notifyBookingUpdate(booking.userId, booking, status);
+
+  const populated = await booking.populate([
+    { path: 'services', select: 'name price' },
+    { path: 'userId', select: 'name email' },
+  ]);
+
+  res.json({ success: true, data: populated });
+});
+
+exports.cancelBooking = asyncHandler(async (req, res) => {
+  const booking = await Booking.findById(req.params.id);
+  if (!booking) {
+    throw new ApiError(404, 'Booking not found');
+  }
+
+  if (booking.userId.toString() !== req.user._id.toString()) {
+    throw new ApiError(403, 'Not authorized');
+  }
+
+  if (booking.bookingStatus !== 'pending') {
+    throw new ApiError(400, 'Only pending bookings can be cancelled');
+  }
+
+  booking.bookingStatus = 'declined';
+  await booking.save();
+
+  res.json({ success: true, message: 'Booking cancelled', data: booking });
+});
