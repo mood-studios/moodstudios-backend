@@ -1,5 +1,5 @@
 /**
- * Seed the database with sample data for local testing.
+ * Seed the database with Mood Studios catalog and test accounts.
  *
  * Usage:
  *   npm run seed         — seed only if database is empty
@@ -9,6 +9,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') }
 
 const mongoose = require('mongoose');
 const connectDB = require('../config/db');
+const { CATEGORIES, SERVICES } = require('./moodStudiosCatalog');
 
 const User = require('../models/User');
 const Category = require('../models/Category');
@@ -34,64 +35,6 @@ const TEST_ACCOUNTS = {
   },
 };
 
-const CATEGORIES = [
-  { name: 'Portrait' },
-  { name: 'Wedding' },
-  { name: 'Events' },
-  { name: 'Product' },
-];
-
-const SERVICES = [
-  {
-    name: 'Basic Portrait Session',
-    description: '1-hour studio portrait session with 10 edited photos.',
-    price: 3500,
-    duration: 60,
-    categoryIndex: 0,
-    isVisible: true,
-  },
-  {
-    name: 'Premium Portrait Session',
-    description: '2-hour session with wardrobe changes and 25 edited photos.',
-    price: 6500,
-    duration: 120,
-    categoryIndex: 0,
-    isVisible: true,
-  },
-  {
-    name: 'Wedding Package — Essential',
-    description: 'Full-day coverage, 300+ edited photos, online gallery.',
-    price: 45000,
-    duration: 480,
-    categoryIndex: 1,
-    isVisible: true,
-  },
-  {
-    name: 'Wedding Package — Premium',
-    description: 'Full-day coverage, second shooter, album, engagement shoot.',
-    price: 75000,
-    duration: 600,
-    categoryIndex: 1,
-    isVisible: true,
-  },
-  {
-    name: 'Corporate Event Coverage',
-    description: 'Half-day event photography with same-day highlights.',
-    price: 12000,
-    duration: 240,
-    categoryIndex: 2,
-    isVisible: true,
-  },
-  {
-    name: 'Product Shoot — Starter',
-    description: 'Up to 10 products on white background, web-ready files.',
-    price: 5000,
-    duration: 90,
-    categoryIndex: 3,
-    isVisible: true,
-  },
-];
-
 const clearDatabase = async () => {
   const collections = mongoose.connection.collections;
   for (const key of Object.keys(collections)) {
@@ -106,6 +49,7 @@ const seed = async () => {
 
   if (userCount > 0 && !isFresh) {
     console.log('Database already has data. Run "npm run seed:fresh" to reset and reseed.');
+    console.log('Or run "npm run seed:services" to update only categories & services.');
     process.exit(0);
   }
 
@@ -116,12 +60,12 @@ const seed = async () => {
   const [admin, customer] = await User.create([TEST_ACCOUNTS.admin, TEST_ACCOUNTS.customer]);
   console.log('Created users:', admin.email, customer.email);
 
-  const categories = await Category.insertMany(CATEGORIES);
+  const categories = await Category.insertMany(CATEGORIES.map((name) => ({ name })));
   console.log(`Created ${categories.length} categories.`);
 
   const serviceDocs = SERVICES.map((s) => {
     const { categoryIndex, ...rest } = s;
-    return { ...rest, category: categories[categoryIndex]._id };
+    return { ...rest, category: categories[categoryIndex]._id, isVisible: true };
   });
   const services = await Service.insertMany(serviceDocs);
   console.log(`Created ${services.length} services.`);
@@ -129,13 +73,14 @@ const seed = async () => {
   const bookingDate = new Date();
   bookingDate.setDate(bookingDate.getDate() + 14);
 
+  const keepsake = services.find((s) => s.name === 'Keepsake');
   const sampleBooking = await Booking.create({
     userId: customer._id,
-    services: [services[0]._id, services[5]._id],
+    services: [keepsake._id],
     bookingDate,
     bookingTime: '10:00 AM',
-    specialRequest: 'Please use natural lighting if possible.',
-    totalAmount: services[0].price + services[5].price,
+    specialRequest: 'First self-portrait session — excited to try the studio!',
+    totalAmount: keepsake.price,
     bookingStatus: 'pending',
     paymentStatus: 'unpaid',
   });
@@ -144,18 +89,10 @@ const seed = async () => {
   console.log('\n========================================');
   console.log('  Mood Studios — Seed complete');
   console.log('========================================\n');
-  console.log('Test accounts (use with POST /api/auth/login):\n');
-  console.log('  Admin');
-  console.log(`    Email:    ${TEST_ACCOUNTS.admin.email}`);
-  console.log(`    Password: ${TEST_ACCOUNTS.admin.password}\n`);
-  console.log('  Customer');
-  console.log(`    Email:    ${TEST_ACCOUNTS.customer.email}`);
-  console.log(`    Password: ${TEST_ACCOUNTS.customer.password}\n`);
-  console.log('Quick tests:\n');
-  console.log('  GET  http://localhost:5000/api/health');
-  console.log('  GET  http://localhost:5000/api/categories');
-  console.log('  GET  http://localhost:5000/api/services');
-  console.log('  POST http://localhost:5000/api/auth/login');
+  console.log('Catalog: 3 categories, 12 packages\n');
+  console.log('Test accounts (POST /api/auth/login):\n');
+  console.log('  Admin    ', TEST_ACCOUNTS.admin.email, '/', TEST_ACCOUNTS.admin.password);
+  console.log('  Customer ', TEST_ACCOUNTS.customer.email, '/', TEST_ACCOUNTS.customer.password);
   console.log('\nStart the API: npm run dev\n');
 };
 

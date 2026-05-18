@@ -56,8 +56,35 @@ const parseWebhookEvent = (body) => {
   };
 };
 
+const createPaymentLink = async ({ amount, description, metadata = {} }) => {
+  const client = getPayMongoClient();
+  if (!client) {
+    throw new ApiError(503, 'PayMongo is not configured');
+  }
+
+  const amountInCentavos = Math.round(amount * 100);
+
+  const { data } = await client.post('/links', {
+    data: {
+      attributes: {
+        amount: amountInCentavos,
+        description: description || 'Mood Studios booking payment',
+        remarks: metadata.bookingId ? `Booking ${metadata.bookingId}` : 'Mood Studios',
+      },
+    },
+  });
+
+  const link = data.data;
+  return {
+    linkId: link.id,
+    checkoutUrl: link.attributes.checkout_url,
+    referenceNumber: link.attributes.reference_number,
+  };
+};
+
 module.exports = {
   createPaymentIntent,
+  createPaymentLink,
   retrievePaymentIntent,
   parseWebhookEvent,
 };

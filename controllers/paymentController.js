@@ -4,6 +4,7 @@ const ApiError = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
 const {
   createPaymentIntent,
+  createPaymentLink,
   retrievePaymentIntent,
   parseWebhookEvent,
 } = require('../services/paymentService');
@@ -66,12 +67,36 @@ exports.createPayment = asyncHandler(async (req, res) => {
   booking.paymentStatus = 'pending';
   await booking.save();
 
+  let checkoutUrl = null;
+  let linkError = null;
+  const isTestKey = process.env.PAYMONGO_SECRET_KEY?.startsWith('sk_test_');
+
+  if (process.env.PAYMONGO_SECRET_KEY) {
+    try {
+      const link = await createPaymentLink({
+        amount: booking.totalAmount,
+        description: `Mood Studios — Booking`,
+        metadata: { bookingId: String(booking._id), userId: String(req.user._id) },
+      });
+      checkoutUrl = link.checkoutUrl;
+      payment.metadata = { ...(payment.metadata || {}), paymongoLinkId: link.linkId };
+      await payment.save();
+    } catch (linkErr) {
+      linkError = linkErr.response?.data?.errors?.[0]?.detail || linkErr.message;
+      console.warn('PayMongo link creation failed:', linkError);
+    }
+  }
+
   res.status(201).json({
     success: true,
     data: {
       payment,
       clientKey: intent.clientKey,
       paymentIntentId: intent.paymentIntentId,
+      checkoutUrl,
+      amount: booking.totalAmount,
+      isTestMode: isTestKey || !process.env.PAYMONGO_SECRET_KEY,
+      linkError,
     },
   });
 });
@@ -102,14 +127,37 @@ exports.confirmPayment = asyncHandler(async (req, res) => {
     throw new ApiError(403, 'Not authorized');
   }
 
-  let intentStatus = 'succeeded';
-  if (process.env.PAYMONGO_SECRET_KEY && payment.paymongoPaymentIntentId) {
+  const isMock = payment.paymongoPaymentIntentId?.startsWith('mock_pi_');
+  const isTestKey = process.env.PAYMONGO_SECRET_KEY?.startsWith('sk_test_');
+  const allowTestConfirm =
+    process.env.ALLOW_TEST_PAYMENT_CONFIRM === 'true' || isTestKey;
+  const testConfirm = req.body.testConfirm === true;
+
+  let intentStatus = 'pending';
+
+  if (isMock || (testConfirm && allowTestConfirm)) {
+    intentStatus = 'succeeded';
+  } else if (process.env.PAYMONGO_SECRET_KEY && payment.paymongoPaymentIntentId) {
     const intent = await retrievePaymentIntent(payment.paymongoPaymentIntentId);
-    intentStatus = intent.attributes?.status === 'succeeded' ? 'succeeded' : 'pending';
+    const status = intent.attributes?.status;
+    if (status === 'succeeded') {
+      intentStatus = 'succeeded';
+    } else if (testConfirm && allowTestConfirm) {
+      intentStatus = 'succeeded';
+    } else if (status === 'awaiting_payment_method' || status === 'awaiting_next_action') {
+      throw new ApiError(
+        400,
+        allowTestConfirm
+          ? 'Payment not completed on PayMongo yet. Open "Continue to PayMongo" and pay with a test card, or use test confirm if enabled.'
+          : 'Payment not completed yet. Finish paying in PayMongo, then tap "I\'ve completed payment".'
+      );
+    }
+  } else if (testConfirm) {
+    intentStatus = 'succeeded';
   }
 
   if (intentStatus !== 'succeeded') {
-    throw new ApiError(400, 'Payment not yet completed');
+    throw new ApiError(400, 'Payment not yet completed. Please finish checkout first.');
   }
 
   payment.status = 'succeeded';

@@ -9,6 +9,7 @@ const { body } = require('express-validator');
 
 router.use(protect);
 
+router.get('/availability', authorize('customer'), bookingController.getAvailability);
 router.post('/', authorize('customer'), createBookingRules, validate, bookingController.createBooking);
 router.get('/my', authorize('customer'), bookingController.getMyBookings);
 router.get('/', authorize('admin'), bookingController.getAllBookings);

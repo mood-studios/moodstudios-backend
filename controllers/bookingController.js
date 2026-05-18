@@ -3,6 +3,11 @@ const Service = require('../models/Service');
 const ApiError = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
 const { notifyBookingUpdate } = require('../services/notificationService');
+const {
+  getAvailability,
+  assertSlotAvailable,
+  getTotalDurationForServices,
+} = require('../services/bookingAvailabilityService');
 
 const calculateTotal = async (serviceIds) => {
   const services = await Service.find({ _id: { $in: serviceIds }, isVisible: true });
@@ -12,6 +17,16 @@ const calculateTotal = async (serviceIds) => {
   return services.reduce((sum, s) => sum + s.price, 0);
 };
 
+exports.getAvailability = asyncHandler(async (req, res) => {
+  const { date, durationMinutes } = req.query;
+  if (!date) {
+    throw new ApiError(400, 'date query parameter is required (YYYY-MM-DD)');
+  }
+
+  const data = await getAvailability(date, Number(durationMinutes) || 60);
+  res.json({ success: true, data });
+});
+
 exports.createBooking = asyncHandler(async (req, res) => {
   const { services, bookingDate, bookingTime, specialRequest } = req.body;
 
@@ -20,12 +35,14 @@ exports.createBooking = asyncHandler(async (req, res) => {
   }
 
   const totalAmount = await calculateTotal(services);
+  const durationMinutes = await getTotalDurationForServices(services);
+  const normalizedTime = await assertSlotAvailable(bookingDate, bookingTime, durationMinutes);
 
   const booking = await Booking.create({
     userId: req.user._id,
     services,
     bookingDate,
-    bookingTime,
+    bookingTime: normalizedTime,
     specialRequest,
     totalAmount,
   });

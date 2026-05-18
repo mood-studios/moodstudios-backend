@@ -37,7 +37,13 @@ npm run dev
 | Admin | `admin@moodstudios.test` | `Admin123!` |
 | Customer | `customer@moodstudios.test` | `Customer123!` |
 
-Sample data includes 4 categories, 6 services, and 1 pending booking.
+Sample data includes **3 categories** and **12 official packages** (Self-Portrait Digital, Pro, and Photographer Session).
+
+To refresh only services on an existing database (keeps users):
+
+```bash
+npm run seed:services
+```
 
 Server: `http://localhost:5000`  
 Health check: `GET /api/health`
