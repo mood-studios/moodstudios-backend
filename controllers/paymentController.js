@@ -5,10 +5,133 @@ const asyncHandler = require('../utils/asyncHandler');
 const {
   createPaymentIntent,
   createPaymentLink,
-  retrievePaymentIntent,
   parseWebhookEvent,
+  resolvePayMongoPaidStatus,
+  retrievePaymentLink,
 } = require('../services/paymentService');
 const { notifyPaymentStatus } = require('../services/notificationService');
+
+const getBookingIdsForPayment = (payment) => {
+  const ids = payment.metadata?.bookingIds;
+  if (Array.isArray(ids) && ids.length) {
+    return ids.map((id) => String(id));
+  }
+  return [String(payment.bookingId)];
+};
+
+const bookingIdsKey = (ids) => [...ids].map(String).sort().join(',');
+
+const findPendingCombinedPayment = async (userId, bookingIds) => {
+  const key = bookingIdsKey(bookingIds);
+  const pending = await Payment.find({
+    userId,
+    status: 'pending',
+    'metadata.combined': true,
+  });
+
+  return (
+    pending.find((p) => bookingIdsKey(getBookingIdsForPayment(p)) === key) || null
+  );
+};
+
+const buildCombinedPaymentResponse = async (payment, extras) => {
+  let checkoutUrl = payment.metadata?.checkoutUrl || extras.checkoutUrl || null;
+
+  if (!checkoutUrl && payment.metadata?.paymongoLinkId) {
+    try {
+      const { link } = await retrievePaymentLink(payment.metadata.paymongoLinkId);
+      checkoutUrl = link.attributes?.checkout_url || null;
+    } catch {
+      /* use stored url only */
+    }
+  }
+
+  return {
+    payment,
+    clientKey: payment.paymongoClientKey,
+    paymentIntentId: payment.paymongoPaymentIntentId,
+    checkoutUrl,
+    amount: payment.amount,
+    isTestMode: extras.isTestMode,
+    linkError: extras.linkError,
+    bookingIds: getBookingIdsForPayment(payment),
+  };
+};
+
+const markPaymentSucceeded = async (payment, transactionId) => {
+  if (payment.status !== 'succeeded') {
+    payment.status = 'succeeded';
+    payment.transactionId = transactionId || payment.transactionId;
+    await payment.save();
+  }
+
+  const bookingIds = getBookingIdsForPayment(payment);
+  let primary = null;
+
+  for (const bookingId of bookingIds) {
+    const booking = await Booking.findById(bookingId);
+    if (!booking) continue;
+
+    const wasAlreadyPaid = booking.paymentStatus === 'paid';
+    const updates = { paymentStatus: 'paid' };
+    if (booking.bookingStatus === 'pending') {
+      updates.bookingStatus = 'confirmed';
+    }
+
+    const updated = await Booking.findByIdAndUpdate(bookingId, updates, { new: true });
+    if (!primary) primary = updated;
+
+    if (!wasAlreadyPaid) {
+      await notifyPaymentStatus(payment.userId, bookingId, 'paid');
+    }
+  }
+
+  return primary;
+};
+
+const startPaymongoCheckout = async ({ amount, description, metadata, userId }) => {
+  let intent;
+  try {
+    intent = await createPaymentIntent({
+      amount,
+      description,
+      metadata,
+    });
+  } catch (err) {
+    if (process.env.NODE_ENV === 'development' && !process.env.PAYMONGO_SECRET_KEY) {
+      intent = {
+        paymentIntentId: `mock_pi_${Date.now()}`,
+        clientKey: 'mock_client_key',
+        status: 'awaiting_payment_method',
+        amount: amount * 100,
+      };
+    } else {
+      throw err;
+    }
+  }
+
+  let checkoutUrl = null;
+  let linkError = null;
+  let linkMeta = {};
+
+  if (process.env.PAYMONGO_SECRET_KEY) {
+    try {
+      const link = await createPaymentLink({ amount, description, metadata });
+      checkoutUrl = link.checkoutUrl;
+      linkMeta = {
+        paymongoLinkId: link.linkId,
+        paymongoReferenceNumber: link.referenceNumber,
+      };
+    } catch (linkErr) {
+      linkError = linkErr.response?.data?.errors?.[0]?.detail || linkErr.message;
+      console.warn('PayMongo link creation failed:', linkError);
+    }
+  }
+
+  const isTestKey = process.env.PAYMONGO_SECRET_KEY?.startsWith('sk_test_');
+
+  return { intent, checkoutUrl, linkError, linkMeta, isTestMode: isTestKey || !process.env.PAYMONGO_SECRET_KEY };
+};
 
 exports.createPayment = asyncHandler(async (req, res) => {
   const { bookingId } = req.body;
@@ -35,25 +158,11 @@ exports.createPayment = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'Payment already completed');
   }
 
-  let intent;
-  try {
-    intent = await createPaymentIntent({
-      amount: booking.totalAmount,
-      description: `Booking ${booking._id}`,
-      metadata: { bookingId: String(booking._id), userId: String(req.user._id) },
-    });
-  } catch (err) {
-    if (process.env.NODE_ENV === 'development' && !process.env.PAYMONGO_SECRET_KEY) {
-      intent = {
-        paymentIntentId: `mock_pi_${Date.now()}`,
-        clientKey: 'mock_client_key',
-        status: 'awaiting_payment_method',
-        amount: booking.totalAmount * 100,
-      };
-    } else {
-      throw err;
-    }
-  }
+  const { intent, checkoutUrl, linkError, linkMeta, isTestMode } = await startPaymongoCheckout({
+    amount: booking.totalAmount,
+    description: `Mood Studios — Booking`,
+    metadata: { bookingId: String(booking._id), userId: String(req.user._id) },
+  });
 
   const payment = await Payment.create({
     bookingId,
@@ -62,30 +171,15 @@ exports.createPayment = asyncHandler(async (req, res) => {
     paymongoPaymentIntentId: intent.paymentIntentId,
     paymongoClientKey: intent.clientKey,
     status: 'pending',
+    metadata: {
+      ...linkMeta,
+      bookingIds: [String(booking._id)],
+      checkoutUrl: checkoutUrl || undefined,
+    },
   });
 
   booking.paymentStatus = 'pending';
   await booking.save();
-
-  let checkoutUrl = null;
-  let linkError = null;
-  const isTestKey = process.env.PAYMONGO_SECRET_KEY?.startsWith('sk_test_');
-
-  if (process.env.PAYMONGO_SECRET_KEY) {
-    try {
-      const link = await createPaymentLink({
-        amount: booking.totalAmount,
-        description: `Mood Studios — Booking`,
-        metadata: { bookingId: String(booking._id), userId: String(req.user._id) },
-      });
-      checkoutUrl = link.checkoutUrl;
-      payment.metadata = { ...(payment.metadata || {}), paymongoLinkId: link.linkId };
-      await payment.save();
-    } catch (linkErr) {
-      linkError = linkErr.response?.data?.errors?.[0]?.detail || linkErr.message;
-      console.warn('PayMongo link creation failed:', linkError);
-    }
-  }
 
   res.status(201).json({
     success: true,
@@ -95,9 +189,91 @@ exports.createPayment = asyncHandler(async (req, res) => {
       paymentIntentId: intent.paymentIntentId,
       checkoutUrl,
       amount: booking.totalAmount,
-      isTestMode: isTestKey || !process.env.PAYMONGO_SECRET_KEY,
+      isTestMode,
       linkError,
+      bookingIds: [String(booking._id)],
     },
+  });
+});
+
+exports.createCombinedPayment = asyncHandler(async (req, res) => {
+  const { bookingIds: rawIds } = req.body;
+  const bookingIds = [...new Set(rawIds.map(String))];
+
+  const bookings = await Booking.find({ _id: { $in: bookingIds } });
+  if (bookings.length !== bookingIds.length) {
+    throw new ApiError(404, 'One or more bookings were not found');
+  }
+
+  let totalAmount = 0;
+  for (const booking of bookings) {
+    if (booking.userId.toString() !== req.user._id.toString()) {
+      throw new ApiError(403, 'Not authorized for one or more bookings');
+    }
+    if (booking.paymentStatus === 'paid') {
+      throw new ApiError(400, 'One or more bookings are already paid');
+    }
+    totalAmount += booking.totalAmount;
+  }
+
+  const existingPending = await findPendingCombinedPayment(req.user._id, bookingIds);
+  if (existingPending) {
+    const isTestKey = process.env.PAYMONGO_SECRET_KEY?.startsWith('sk_test_');
+    return res.status(200).json({
+      success: true,
+      data: await buildCombinedPaymentResponse(existingPending, {
+        isTestMode: isTestKey || !process.env.PAYMONGO_SECRET_KEY,
+        linkError: null,
+      }),
+    });
+  }
+
+  await Payment.deleteMany({
+    userId: req.user._id,
+    status: 'pending',
+    bookingId: { $in: bookingIds },
+  });
+
+  const metaUserId = String(req.user._id);
+  const paymongoMeta = {
+    bookingIds: bookingIds.join(','),
+    userId: metaUserId,
+    combined: 'true',
+  };
+
+  const { intent, checkoutUrl, linkError, linkMeta, isTestMode } = await startPaymongoCheckout({
+    amount: totalAmount,
+    description: `Mood Studios — ${bookingIds.length} booking(s)`,
+    metadata: paymongoMeta,
+  });
+
+  const payment = await Payment.create({
+    bookingId: bookings[0]._id,
+    userId: req.user._id,
+    amount: totalAmount,
+    paymongoPaymentIntentId: intent.paymentIntentId,
+    paymongoClientKey: intent.clientKey,
+    status: 'pending',
+    metadata: {
+      ...linkMeta,
+      bookingIds,
+      combined: true,
+      checkoutUrl: checkoutUrl || undefined,
+    },
+  });
+
+  await Booking.updateMany(
+    { _id: { $in: bookingIds } },
+    { paymentStatus: 'pending' }
+  );
+
+  res.status(201).json({
+    success: true,
+    data: await buildCombinedPaymentResponse(payment, {
+      checkoutUrl,
+      isTestMode,
+      linkError,
+    }),
   });
 });
 
@@ -133,45 +309,33 @@ exports.confirmPayment = asyncHandler(async (req, res) => {
     process.env.ALLOW_TEST_PAYMENT_CONFIRM === 'true' || isTestKey;
   const testConfirm = req.body.testConfirm === true;
 
-  let intentStatus = 'pending';
+  if (payment.status === 'succeeded') {
+    const booking = await Booking.findById(payment.bookingId);
+    return res.json({ success: true, data: { payment, booking } });
+  }
+
+  let paid = false;
+  let transactionId = null;
 
   if (isMock || (testConfirm && allowTestConfirm)) {
-    intentStatus = 'succeeded';
-  } else if (process.env.PAYMONGO_SECRET_KEY && payment.paymongoPaymentIntentId) {
-    const intent = await retrievePaymentIntent(payment.paymongoPaymentIntentId);
-    const status = intent.attributes?.status;
-    if (status === 'succeeded') {
-      intentStatus = 'succeeded';
-    } else if (testConfirm && allowTestConfirm) {
-      intentStatus = 'succeeded';
-    } else if (status === 'awaiting_payment_method' || status === 'awaiting_next_action') {
-      throw new ApiError(
-        400,
-        allowTestConfirm
-          ? 'Payment not completed on PayMongo yet. Open "Continue to PayMongo" and pay with a test card, or use test confirm if enabled.'
-          : 'Payment not completed yet. Finish paying in PayMongo, then tap "I\'ve completed payment".'
-      );
-    }
+    paid = true;
+    transactionId = payment.paymongoPaymentIntentId;
+  } else if (process.env.PAYMONGO_SECRET_KEY) {
+    const resolved = await resolvePayMongoPaidStatus(payment);
+    paid = resolved.paid;
+    transactionId = resolved.transactionId;
   } else if (testConfirm) {
-    intentStatus = 'succeeded';
+    paid = true;
   }
 
-  if (intentStatus !== 'succeeded') {
-    throw new ApiError(400, 'Payment not yet completed. Please finish checkout first.');
+  if (!paid) {
+    throw new ApiError(
+      400,
+      'Payment not completed on PayMongo yet. Finish paying on the PayMongo page, then tap "I\'ve completed payment".'
+    );
   }
 
-  payment.status = 'succeeded';
-  payment.transactionId = payment.paymongoPaymentIntentId;
-  await payment.save();
-
-  const booking = await Booking.findByIdAndUpdate(
-    payment.bookingId,
-    { paymentStatus: 'paid' },
-    { new: true }
-  );
-
-  await notifyPaymentStatus(payment.userId, payment.bookingId, 'paid');
-
+  const booking = await markPaymentSucceeded(payment, transactionId);
   res.json({ success: true, data: { payment, booking } });
 });
 
@@ -185,25 +349,40 @@ exports.paymongoWebhook = asyncHandler(async (req, res) => {
     return res.status(400).json({ success: false, message: 'Invalid webhook payload' });
   }
 
-  const payment = await Payment.findOne({
-    paymongoPaymentIntentId: event.paymentIntentId,
-  });
+  let payment = null;
+
+  if (event.paymentIntentId) {
+    payment = await Payment.findOne({ paymongoPaymentIntentId: event.paymentIntentId });
+  }
+
+  if (!payment && event.linkId) {
+    payment = await Payment.findOne({ 'metadata.paymongoLinkId': event.linkId });
+  }
+
+  if (!payment && event.resourceId?.startsWith('link_')) {
+    payment = await Payment.findOne({ 'metadata.paymongoLinkId': event.resourceId });
+  }
+
+  if (!payment && event.referenceNumber) {
+    payment = await Payment.findOne({
+      'metadata.paymongoReferenceNumber': event.referenceNumber,
+    });
+  }
 
   if (!payment) {
     return res.status(200).json({ received: true });
   }
 
-  if (event.status === 'succeeded' || event.type?.includes('payment.paid')) {
-    payment.status = 'succeeded';
-    payment.transactionId = event.resourceId;
-    await payment.save();
-
-    await Booking.findByIdAndUpdate(payment.bookingId, { paymentStatus: 'paid' });
-    await notifyPaymentStatus(payment.userId, payment.bookingId, 'paid');
+  if (event.isPaid || event.status === 'succeeded' || event.status === 'paid') {
+    await markPaymentSucceeded(
+      payment,
+      event.paymentId || event.resourceId
+    );
   } else if (event.status === 'failed') {
     payment.status = 'failed';
     await payment.save();
-    await Booking.findByIdAndUpdate(payment.bookingId, { paymentStatus: 'failed' });
+    const ids = getBookingIdsForPayment(payment);
+    await Booking.updateMany({ _id: { $in: ids } }, { paymentStatus: 'failed' });
   }
 
   res.status(200).json({ received: true });

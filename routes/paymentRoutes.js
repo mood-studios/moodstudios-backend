@@ -9,6 +9,12 @@ router.post('/webhook', paymentController.paymongoWebhook);
 
 router.use(protect);
 
+router.post(
+  '/combined',
+  [body('bookingIds').isArray({ min: 1 }), body('bookingIds.*').isMongoId()],
+  validate,
+  paymentController.createCombinedPayment
+);
 router.post('/', [body('bookingId').isMongoId()], validate, paymentController.createPayment);
 router.get('/:id', paymentController.getPayment);
 router.post('/:id/confirm', paymentController.confirmPayment);

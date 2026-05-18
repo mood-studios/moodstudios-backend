@@ -78,9 +78,11 @@ Base URL: `/api`
 | Method | Endpoint | Access | Description |
 |--------|----------|--------|-------------|
 | POST | `/auth/register` | Public | Register customer (or admin if allowed) |
-| POST | `/auth/login` | Public | Login, returns JWT |
+| POST | `/auth/login` | Public | Login; sets httpOnly cookie + returns user (and JWT for mobile) |
 | POST | `/auth/verify-otp` | Public | Verify email OTP |
 | POST | `/auth/resend-otp` | Public | Resend OTP (mocked in dev) |
+| GET | `/auth/me` | Auth | Current user from session cookie or Bearer token |
+| POST | `/auth/logout` | Public | Clears session cookie |
 
 ### Users
 
@@ -171,7 +173,7 @@ Notifications are created automatically for booking updates, payments, and new c
 ## Auth Header
 
 ```
-Authorization: Bearer <token>
+Authorization: Bearer <token> (mobile) **or** httpOnly `mood_token` cookie (landing site with `credentials: include`)
 ```
 
 ## Project Structure

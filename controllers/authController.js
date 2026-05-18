@@ -1,18 +1,8 @@
 const User = require('../models/User');
 const ApiError = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
-const { signToken } = require('../utils/token');
+const { issueAuth, clearAuthCookie, userPayload } = require('../utils/authCookie');
 const { generateOtp, sendOtpEmail } = require('../services/emailService');
-
-const buildAuthResponse = (user) => ({
-  _id: user._id,
-  name: user.name,
-  email: user.email,
-  phone: user.phone,
-  role: user.role,
-  isVerified: user.isVerified,
-  token: signToken(user._id, user.role),
-});
 
 exports.register = asyncHandler(async (req, res) => {
   const { name, email, password, phone, role } = req.body;
@@ -40,7 +30,7 @@ exports.register = asyncHandler(async (req, res) => {
   res.status(201).json({
     success: true,
     message: 'Registration successful. Please verify your email with the OTP sent.',
-    data: buildAuthResponse(user),
+    data: issueAuth(res, user),
   });
 });
 
@@ -54,7 +44,7 @@ exports.login = asyncHandler(async (req, res) => {
 
   res.json({
     success: true,
-    data: buildAuthResponse(user),
+    data: issueAuth(res, user),
   });
 });
 
@@ -78,8 +68,20 @@ exports.verifyOtp = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     message: 'Email verified successfully',
-    data: buildAuthResponse(user),
+    data: issueAuth(res, user),
   });
+});
+
+exports.me = asyncHandler(async (req, res) => {
+  res.json({
+    success: true,
+    data: userPayload(req.user),
+  });
+});
+
+exports.logout = asyncHandler(async (req, res) => {
+  clearAuthCookie(res);
+  res.json({ success: true, message: 'Logged out' });
 });
 
 exports.resendOtp = asyncHandler(async (req, res) => {

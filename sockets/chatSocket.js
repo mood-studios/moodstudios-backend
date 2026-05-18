@@ -1,14 +1,35 @@
 const jwt = require('jsonwebtoken');
 const Chat = require('../models/Chat');
 const User = require('../models/User');
+const { COOKIE_NAME } = require('../utils/authCookie');
 const { buildRoomId } = require('../controllers/chatController');
 const { notifyNewMessage } = require('../services/notificationService');
 
+const readTokenFromHandshake = (socket) => {
+  if (socket.handshake.auth?.token) {
+    return socket.handshake.auth.token;
+  }
+  const authHeader = socket.handshake.headers?.authorization;
+  if (authHeader?.startsWith('Bearer ')) {
+    return authHeader.slice(7);
+  }
+  const cookieHeader = socket.handshake.headers?.cookie;
+  if (!cookieHeader) return null;
+  for (const part of cookieHeader.split(';')) {
+    const trimmed = part.trim();
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    const key = trimmed.slice(0, eq);
+    if (key === COOKIE_NAME) {
+      return decodeURIComponent(trimmed.slice(eq + 1));
+    }
+  }
+  return null;
+};
+
 const authenticateSocket = async (socket, next) => {
   try {
-    const token =
-      socket.handshake.auth?.token ||
-      socket.handshake.headers?.authorization?.replace('Bearer ', '');
+    const token = readTokenFromHandshake(socket);
 
     if (!token) {
       return next(new Error('Authentication required'));

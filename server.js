@@ -3,6 +3,7 @@ require('dotenv').config();
 const http = require('http');
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
@@ -21,7 +22,9 @@ const server = http.createServer(app);
 const allowedOrigins = [
   process.env.CLIENT_URL,
   process.env.ADMIN_URL,
+  process.env.LANDING_URL,
   'http://localhost:3000',
+  'http://localhost:5173',
   'http://localhost:8081',
 ].filter(Boolean);
 
@@ -64,6 +67,7 @@ if (process.env.NODE_ENV === 'development') {
 }
 
 app.use('/api/payments/webhook', express.raw({ type: 'application/json' }));
+app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 

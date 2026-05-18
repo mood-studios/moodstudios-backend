@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 
+router.use('/public', require('./publicRoutes'));
 router.use('/auth', require('./authRoutes'));
 router.use('/users', require('./userRoutes'));
 router.use('/categories', require('./categoryRoutes'));

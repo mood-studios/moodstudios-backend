@@ -2,13 +2,10 @@ const jwt = require('jsonwebtoken');
 const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const User = require('../models/User');
+const { readAuthToken } = require('../utils/authCookie');
 
 const protect = asyncHandler(async (req, res, next) => {
-  let token;
-
-  if (req.headers.authorization?.startsWith('Bearer')) {
-    token = req.headers.authorization.split(' ')[1];
-  }
+  const token = readAuthToken(req);
 
   if (!token) {
     throw new ApiError(401, 'Not authorized — no token provided');

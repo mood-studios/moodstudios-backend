@@ -1,4 +1,5 @@
 const Booking = require('../models/Booking');
+const Payment = require('../models/Payment');
 const Service = require('../models/Service');
 const ApiError = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
@@ -57,8 +58,26 @@ exports.createBooking = asyncHandler(async (req, res) => {
 
 exports.getMyBookings = asyncHandler(async (req, res) => {
   const bookings = await Booking.find({ userId: req.user._id })
-    .populate('services', 'name price duration image')
+    .populate('services', 'name price duration image description')
     .sort({ createdAt: -1 });
+
+  const needsSync = bookings.filter((b) => b.paymentStatus !== 'paid');
+  if (needsSync.length) {
+    const succeeded = await Payment.find({
+      bookingId: { $in: needsSync.map((b) => b._id) },
+      status: 'succeeded',
+    });
+    const paidBookingIds = new Set(succeeded.map((p) => p.bookingId.toString()));
+
+    for (const booking of bookings) {
+      if (!paidBookingIds.has(booking._id.toString())) continue;
+      booking.paymentStatus = 'paid';
+      if (booking.bookingStatus === 'pending') {
+        booking.bookingStatus = 'confirmed';
+      }
+      await booking.save();
+    }
+  }
 
   res.json({ success: true, data: bookings });
 });
@@ -80,7 +99,7 @@ exports.getAllBookings = asyncHandler(async (req, res) => {
 exports.getBooking = asyncHandler(async (req, res) => {
   const booking = await Booking.findById(req.params.id)
     .populate('userId', 'name email phone')
-    .populate('services', 'name price duration image');
+    .populate('services', 'name price duration image description');
 
   if (!booking) {
     throw new ApiError(404, 'Booking not found');
