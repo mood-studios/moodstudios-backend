@@ -8,14 +8,69 @@ exports.getProfile = asyncHandler(async (req, res) => {
 
 exports.updateProfile = asyncHandler(async (req, res) => {
   const { name, phone, fcmToken } = req.body;
+  const updates = {};
+  if (name !== undefined) updates.name = name;
+  if (phone !== undefined) updates.phone = phone;
+  if (fcmToken !== undefined) updates.fcmToken = fcmToken;
 
-  const user = await User.findByIdAndUpdate(
-    req.user._id,
-    { ...(name && { name }), ...(phone && { phone }), ...(fcmToken && { fcmToken }) },
-    { new: true, runValidators: true }
-  );
+  const user = await User.findByIdAndUpdate(req.user._id, updates, {
+    new: true,
+    runValidators: true,
+  });
 
   res.json({ success: true, data: user });
+});
+
+exports.getPreferences = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user._id).select('preferences');
+  res.json({ success: true, data: user.preferences });
+});
+
+exports.updatePreferences = asyncHandler(async (req, res) => {
+  const { notifications, emailDigest, theme, language } = req.body;
+  const user = await User.findById(req.user._id);
+
+  if (!user.preferences) {
+    user.preferences = {};
+  }
+
+  if (notifications) {
+    const current = user.preferences.notifications?.toObject?.() ?? user.preferences.notifications ?? {};
+    user.preferences.notifications = { ...current, ...notifications };
+    user.markModified('preferences.notifications');
+  }
+  if (emailDigest !== undefined) user.preferences.emailDigest = emailDigest;
+  if (theme !== undefined) user.preferences.theme = theme;
+  if (language !== undefined) user.preferences.language = language;
+
+  await user.save();
+  res.json({ success: true, data: user.preferences });
+});
+
+exports.changePassword = asyncHandler(async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  const user = await User.findById(req.user._id).select('+password');
+
+  if (!(await user.comparePassword(currentPassword))) {
+    throw new ApiError(400, 'Current password is incorrect');
+  }
+
+  user.password = newPassword;
+  await user.save();
+
+  res.json({ success: true, message: 'Password updated successfully' });
+});
+
+exports.deleteMyAccount = asyncHandler(async (req, res) => {
+  const { password } = req.body;
+  const user = await User.findById(req.user._id).select('+password');
+
+  if (!password || !(await user.comparePassword(password))) {
+    throw new ApiError(400, 'Password is required to delete your account');
+  }
+
+  await user.deleteOne();
+  res.json({ success: true, message: 'Account deleted successfully' });
 });
 
 exports.getAllUsers = asyncHandler(async (req, res) => {

@@ -22,6 +22,21 @@ const userSchema = new mongoose.Schema(
     otpCode: { type: String, select: false },
     otpExpires: { type: Date, select: false },
     fcmToken: { type: String },
+    preferences: {
+      notifications: {
+        booking: { type: Boolean, default: true },
+        payment: { type: Boolean, default: true },
+        messages: { type: Boolean, default: true },
+        marketing: { type: Boolean, default: false },
+      },
+      emailDigest: { type: Boolean, default: true },
+      theme: {
+        type: String,
+        enum: ['light', 'dark', 'system'],
+        default: 'light',
+      },
+      language: { type: String, default: 'en', trim: true },
+    },
   },
   { timestamps: true }
 );
