@@ -59,6 +59,20 @@ See `.env.example` for all variables. Required for core features:
 | `CLIENT_URL` | React Native app origin (CORS) |
 | `ADMIN_URL` | Admin panel origin (CORS) |
 
+### Rate limiting
+
+Per-IP limits (15-minute window by default). Exceeded requests return `429` with `{ "success": false, "message": "Too many requests, please try again later" }`.
+
+| Scope | Default max | Env override |
+|-------|-------------|--------------|
+| All API routes | 200 | `RATE_LIMIT_MAX` |
+| Login / register | 15 | `RATE_LIMIT_AUTH_MAX` |
+| OTP send / verify / resend | 8 | `RATE_LIMIT_OTP_MAX` |
+| Image uploads | 30 | `RATE_LIMIT_UPLOAD_MAX` |
+| Window length (ms) | 900000 | `RATE_LIMIT_WINDOW_MS` |
+
+Skipped: `GET /api/health`, `POST /api/payments/webhook`.
+
 Optional integrations:
 
 | Variable | Description |

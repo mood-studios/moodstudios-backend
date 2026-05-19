@@ -7,8 +7,8 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
 const morgan = require('morgan');
-const rateLimit = require('express-rate-limit');
 const { Server } = require('socket.io');
+const { generalLimiter } = require('./middleware/rateLimit');
 
 const connectDB = require('./config/db');
 const { configureCloudinary } = require('./config/cloudinary');
@@ -19,6 +19,9 @@ const { initChatSocket } = require('./sockets/chatSocket');
 
 const app = express();
 const server = http.createServer(app);
+
+// Required behind Render/nginx so rate limits use the real client IP
+app.set('trust proxy', 1);
 
 const allowedOrigins = [
   process.env.CLIENT_URL,
@@ -53,15 +56,7 @@ app.use(
   })
 );
 
-app.use(
-  rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 200,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { success: false, message: 'Too many requests, please try again later' },
-  })
-);
+app.use(generalLimiter);
 
 if (process.env.NODE_ENV === 'development') {
   app.use(morgan('dev'));
