@@ -23,7 +23,13 @@ const server = http.createServer(app);
 // Required behind Render/nginx so rate limits use the real client IP
 app.set('trust proxy', 1);
 
+const PRODUCTION_ORIGINS = [
+  'https://moodstudios.vercel.app',
+  'https://moodstudios-admin.vercel.app',
+];
+
 const allowedOrigins = [
+  ...PRODUCTION_ORIGINS,
   process.env.CLIENT_URL,
   process.env.ADMIN_URL,
   process.env.LANDING_URL,
@@ -32,9 +38,11 @@ const allowedOrigins = [
   'http://localhost:8081',
 ].filter(Boolean);
 
+const uniqueOrigins = [...new Set(allowedOrigins)];
+
 const io = new Server(server, {
   cors: {
-    origin: allowedOrigins.length ? allowedOrigins : '*',
+    origin: uniqueOrigins,
     methods: ['GET', 'POST'],
     credentials: true,
   },
@@ -46,10 +54,10 @@ app.use(helmet());
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+      if (!origin || uniqueOrigins.includes(origin)) {
         callback(null, true);
       } else {
-        callback(null, true);
+        callback(new Error(`CORS blocked: ${origin}`));
       }
     },
     credentials: true,
