@@ -56,10 +56,18 @@ const initChatSocket = (io) => {
 
     socket.join(`user_${socket.user._id}`);
 
-    socket.on('join_room', ({ receiverId, bookingId }) => {
-      const roomId = buildRoomId(socket.user._id, receiverId, bookingId);
-      socket.join(roomId);
-      socket.emit('room_joined', { roomId });
+    socket.on('join_room', async ({ receiverId, bookingId }) => {
+      try {
+        const partner = await User.findById(receiverId).select('role').lean();
+        const roomId = buildRoomId(socket.user._id, receiverId, bookingId, {
+          role1: socket.user.role,
+          role2: partner?.role,
+        });
+        socket.join(roomId);
+        socket.emit('room_joined', { roomId });
+      } catch (err) {
+        socket.emit('error', { message: 'Could not join room' });
+      }
     });
 
     socket.on('send_message', async ({ receiverId, message, bookingId }) => {
@@ -67,7 +75,11 @@ const initChatSocket = (io) => {
         return socket.emit('error', { message: 'receiverId and message are required' });
       }
 
-      const roomId = buildRoomId(socket.user._id, receiverId, bookingId);
+      const partner = await User.findById(receiverId).select('role').lean();
+      const roomId = buildRoomId(socket.user._id, receiverId, bookingId, {
+        role1: socket.user.role,
+        role2: partner?.role,
+      });
 
       const chat = await Chat.create({
         roomId,

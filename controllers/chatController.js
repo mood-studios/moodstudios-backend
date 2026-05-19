@@ -1,12 +1,74 @@
+const mongoose = require('mongoose');
 const Chat = require('../models/Chat');
 const User = require('../models/User');
 const ApiError = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
 const { notifyNewMessage } = require('../services/notificationService');
 
-const buildRoomId = (userId1, userId2, bookingId) => {
-  const sorted = [userId1.toString(), userId2.toString()].sort().join('_');
+const getAdminIds = () => User.find({ role: 'admin' }).distinct('_id');
+
+/**
+ * Studio inbox: one thread per customer for all admins (not per admin user).
+ */
+const buildRoomId = (userId1, userId2, bookingId, roles = {}) => {
+  const id1 = userId1.toString();
+  const id2 = userId2.toString();
+  const { role1, role2 } = roles;
+
+  let customerId = null;
+  if (role1 === 'customer') customerId = id1;
+  else if (role2 === 'customer') customerId = id2;
+
+  if (customerId && (role1 === 'admin' || role2 === 'admin')) {
+    return bookingId
+      ? `booking_${bookingId}_studio_${customerId}`
+      : `chat_studio_${customerId}`;
+  }
+
+  const sorted = [id1, id2].sort().join('_');
   return bookingId ? `booking_${bookingId}_${sorted}` : `chat_${sorted}`;
+};
+
+const partnerRole = async (userId) => {
+  const user = await User.findById(userId).select('role').lean();
+  return user?.role || null;
+};
+
+const historyFilterForUser = async (user, receiverId, bookingId) => {
+  const partnerOid = new mongoose.Types.ObjectId(String(receiverId));
+
+  if (user.role === 'admin') {
+    const adminIds = await getAdminIds();
+    const filter = {
+      $or: [
+        { senderId: { $in: adminIds }, receiverId: partnerOid },
+        { senderId: partnerOid, receiverId: { $in: adminIds } },
+      ],
+    };
+    if (bookingId) filter.bookingId = new mongoose.Types.ObjectId(String(bookingId));
+    return filter;
+  }
+
+  if (user.role === 'customer') {
+    const adminIds = await getAdminIds();
+    const filter = {
+      $or: [
+        { senderId: user._id, receiverId: { $in: adminIds } },
+        { senderId: { $in: adminIds }, receiverId: user._id },
+      ],
+    };
+    if (bookingId) filter.bookingId = new mongoose.Types.ObjectId(String(bookingId));
+    return filter;
+  }
+
+  const filter = {
+    $or: [
+      { senderId: user._id, receiverId: partnerOid },
+      { senderId: partnerOid, receiverId: user._id },
+    ],
+  };
+  if (bookingId) filter.bookingId = new mongoose.Types.ObjectId(String(bookingId));
+  return filter;
 };
 
 exports.sendMessage = asyncHandler(async (req, res) => {
@@ -16,7 +78,11 @@ exports.sendMessage = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'receiverId and message are required');
   }
 
-  const roomId = buildRoomId(req.user._id, receiverId, bookingId);
+  const role2 = await partnerRole(receiverId);
+  const roomId = buildRoomId(req.user._id, receiverId, bookingId, {
+    role1: req.user.role,
+    role2,
+  });
 
   const chat = await Chat.create({
     roomId,
@@ -50,9 +116,19 @@ exports.getChatHistory = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'receiverId is required');
   }
 
-  const roomId = buildRoomId(req.user._id, receiverId, bookingId);
+  if (!mongoose.Types.ObjectId.isValid(String(receiverId))) {
+    throw new ApiError(400, 'Invalid receiverId');
+  }
 
-  const messages = await Chat.find({ roomId })
+  const role2 = req.user.role === 'customer' ? 'admin' : await partnerRole(receiverId);
+  const roomId = buildRoomId(req.user._id, receiverId, bookingId, {
+    role1: req.user.role,
+    role2,
+  });
+
+  const filter = await historyFilterForUser(req.user, receiverId, bookingId);
+
+  const messages = await Chat.find(filter)
     .populate('senderId', 'name role')
     .populate('receiverId', 'name role')
     .sort({ createdAt: 1 })
@@ -105,7 +181,7 @@ exports.getAdminChatPartners = asyncHandler(async (req, res) => {
 });
 
 exports.getStudioContact = asyncHandler(async (req, res) => {
-  const admin = await User.findOne({ role: 'admin' }).select('name email role');
+  const admin = await User.findOne({ role: 'admin' }).sort({ createdAt: 1 }).select('name email role');
   if (!admin) {
     throw new ApiError(404, 'Studio contact not available');
   }
