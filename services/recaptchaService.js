@@ -2,7 +2,7 @@ const ApiError = require('../utils/ApiError');
 
 const isRecaptchaEnabled = () => Boolean(process.env.RECAPTCHA_SECRET_KEY);
 
-const verifyRecaptcha = async (token) => {
+const verifyRecaptcha = async (token, { isMobileClient = false } = {}) => {
   if (!isRecaptchaEnabled()) {
     if (process.env.NODE_ENV === 'production') {
       throw new ApiError(503, 'reCAPTCHA is not configured');
@@ -14,6 +14,12 @@ const verifyRecaptcha = async (token) => {
   }
 
   if (!token) {
+    if (isMobileClient && process.env.ALLOW_MOBILE_RECAPTCHA_SKIP === 'true') {
+      return true;
+    }
+    if (process.env.NODE_ENV !== 'production' && process.env.ALLOW_RECAPTCHA_SKIP === 'true') {
+      return true;
+    }
     throw new ApiError(400, 'Please complete the reCAPTCHA challenge');
   }
 

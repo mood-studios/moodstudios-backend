@@ -75,8 +75,11 @@ exports.deleteMyAccount = asyncHandler(async (req, res) => {
 });
 
 exports.getAllUsers = asyncHandler(async (req, res) => {
-  const { role, search, page = 1, limit = 20 } = req.query;
+  const { role, search, page = 1, limit = 20, isVerified } = req.query;
   const filter = role ? { role } : {};
+
+  if (isVerified === 'true') filter.isVerified = true;
+  else if (isVerified === 'false') filter.isVerified = false;
 
   if (search?.trim()) {
     const regex = { $regex: search.trim(), $options: 'i' };

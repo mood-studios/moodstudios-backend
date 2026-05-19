@@ -3,59 +3,116 @@ const ApiError = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
 const { issueAuth, clearAuthCookie, userPayload } = require('../utils/authCookie');
 const { generateOtp, sendOtpEmail } = require('../services/emailService');
+const { assignOtp, isOtpExpired } = require('../utils/otp');
+const signupStore = require('../services/signupVerificationStore');
 const { verifyRecaptcha } = require('../services/recaptchaService');
 const { logActivity } = require('../services/activityLogService');
 
+const emailTakenMessage = 'Email already registered';
+
+async function assertEmailAvailable(email) {
+  const existing = await User.findOne({ email });
+  if (existing) {
+    throw new ApiError(400, emailTakenMessage);
+  }
+}
+
+/** Remove legacy unverified accounts from the old signup flow. */
+async function removeStaleUnverifiedUser(email) {
+  await User.deleteOne({ email, isVerified: false });
+}
+
+exports.sendSignupOtp = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+
+  await assertEmailAvailable(email);
+  signupStore.clear(email);
+
+  const otp = generateOtp();
+  signupStore.setOtp(email, otp);
+  await sendOtpEmail(email, otp);
+
+  res.json({
+    success: true,
+    message: 'Verification code sent to your email',
+  });
+});
+
+exports.verifySignupOtp = asyncHandler(async (req, res) => {
+  const { email, otp } = req.body;
+  const code = String(otp).trim();
+
+  const existing = await User.findOne({ email });
+  if (existing) {
+    throw new ApiError(400, emailTakenMessage);
+  }
+
+  const result = signupStore.verifyOtpCode(email, code);
+  if (!result.ok) {
+    throw new ApiError(400, result.expired ? 'Verification code expired' : 'Invalid verification code');
+  }
+
+  signupStore.markVerified(email);
+
+  res.json({
+    success: true,
+    message: 'Email verified. You can finish creating your account.',
+  });
+});
+
 exports.register = asyncHandler(async (req, res) => {
   const { name, email, password, phone, role, recaptchaToken } = req.body;
+  const isMobileClient = req.get('X-Mood-Client') === 'mobile';
 
-  await verifyRecaptcha(recaptchaToken);
-
-  const exists = await User.findOne({ email });
-  if (exists) {
-    throw new ApiError(400, 'Email already registered');
+  if (!signupStore.isVerified(email)) {
+    throw new ApiError(400, 'Please verify your email before registering');
   }
+
+  await verifyRecaptcha(recaptchaToken, { isMobileClient });
+  await assertEmailAvailable(email);
+  await removeStaleUnverifiedUser(email);
 
   const allowedRole = role === 'admin' && process.env.ALLOW_ADMIN_REGISTER === 'true' ? 'admin' : 'customer';
 
-  const otp = generateOtp();
   const user = await User.create({
     name,
     email,
     password,
     phone,
     role: allowedRole,
-    otpCode: otp,
-    otpExpires: new Date(Date.now() + 10 * 60 * 1000),
+    isVerified: true,
   });
 
-  await sendOtpEmail(email, otp);
+  signupStore.consumeVerified(email);
 
   res.status(201).json({
     success: true,
-    message: 'Registration successful. Please verify your email with the OTP sent.',
-    data: { email: user.email, requiresVerification: true },
+    message: 'Account created successfully',
+    data: issueAuth(res, user),
   });
 });
 
 exports.login = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
-  const user = await User.findOne({ email }).select('+password');
+  const user = await User.findOne({ email }).select('+password +otpCode +otpExpires');
   if (!user || !(await user.comparePassword(password))) {
     throw new ApiError(401, 'Invalid email or password');
   }
 
   if (!user.isVerified) {
-    const otp = generateOtp();
-    user.otpCode = otp;
-    user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
-    await user.save();
-    await sendOtpEmail(email, otp);
+    let message = 'Please verify your email. Use the code we already sent.';
+    if (isOtpExpired(user)) {
+      const otp = generateOtp();
+      assignOtp(user, otp);
+      await user.save();
+      await sendOtpEmail(email, otp);
+      message = 'Please verify your email. A new code was sent.';
+    }
 
     return res.json({
       success: true,
-      message: 'Please verify your email. A new code was sent.',
+      message,
       data: {
         ...issueAuth(res, user),
         requiresVerification: true,
@@ -81,15 +138,21 @@ exports.login = asyncHandler(async (req, res) => {
   });
 });
 
+/** Legacy: verify email for accounts created before SafeBite-style signup. */
 exports.verifyOtp = asyncHandler(async (req, res) => {
   const { email, otp } = req.body;
+  const code = String(otp).trim();
 
   const user = await User.findOne({ email }).select('+otpCode +otpExpires');
   if (!user) {
     throw new ApiError(404, 'User not found');
   }
 
-  if (user.otpCode !== otp || user.otpExpires < new Date()) {
+  if (user.isVerified) {
+    throw new ApiError(400, 'Email is already verified');
+  }
+
+  if (!user.otpCode || isOtpExpired(user) || user.otpCode !== code) {
     throw new ApiError(400, 'Invalid or expired OTP');
   }
 
@@ -120,20 +183,25 @@ exports.logout = asyncHandler(async (req, res) => {
 exports.resendOtp = asyncHandler(async (req, res) => {
   const { email } = req.body;
 
-  const user = await User.findOne({ email });
-  if (!user) {
-    throw new ApiError(404, 'User not found');
+  const existing = await User.findOne({ email });
+  if (!existing) {
+    await assertEmailAvailable(email);
+    const otp = generateOtp();
+    signupStore.setOtp(email, otp);
+    await sendOtpEmail(email, otp);
+    return res.json({
+      success: true,
+      message: 'Verification code sent to your email',
+    });
   }
 
-  if (user.isVerified) {
+  if (existing.isVerified) {
     throw new ApiError(400, 'Email is already verified');
   }
 
   const otp = generateOtp();
-  user.otpCode = otp;
-  user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
-  await user.save();
-
+  assignOtp(existing, otp);
+  await existing.save();
   await sendOtpEmail(email, otp);
 
   res.json({
