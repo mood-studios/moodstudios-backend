@@ -18,6 +18,10 @@ const protect = asyncHandler(async (req, res, next) => {
     throw new ApiError(401, 'User no longer exists');
   }
 
+  if (user.role === 'customer' && !user.isVerified) {
+    throw new ApiError(403, 'Please verify your email before continuing');
+  }
+
   req.user = user;
   next();
 });

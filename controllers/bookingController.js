@@ -1,14 +1,16 @@
 const Booking = require('../models/Booking');
 const Payment = require('../models/Payment');
 const Service = require('../models/Service');
+const User = require('../models/User');
 const ApiError = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
-const { notifyBookingUpdate } = require('../services/notificationService');
+const { notifyBookingUpdate, createNotification } = require('../services/notificationService');
 const {
   getAvailability,
   assertSlotAvailable,
   getTotalDurationForServices,
 } = require('../services/bookingAvailabilityService');
+const { logActivity } = require('../services/activityLogService');
 
 const calculateTotal = async (serviceIds) => {
   const services = await Service.find({ _id: { $in: serviceIds }, isVisible: true });
@@ -19,12 +21,16 @@ const calculateTotal = async (serviceIds) => {
 };
 
 exports.getAvailability = asyncHandler(async (req, res) => {
-  const { date, durationMinutes } = req.query;
+  const { date, durationMinutes, excludeBookingId } = req.query;
   if (!date) {
     throw new ApiError(400, 'date query parameter is required (YYYY-MM-DD)');
   }
 
-  const data = await getAvailability(date, Number(durationMinutes) || 60);
+  const data = await getAvailability(
+    date,
+    Number(durationMinutes) || 60,
+    excludeBookingId || undefined
+  );
   res.json({ success: true, data });
 });
 
@@ -83,10 +89,22 @@ exports.getMyBookings = asyncHandler(async (req, res) => {
 });
 
 exports.getAllBookings = asyncHandler(async (req, res) => {
-  const { status, paymentStatus } = req.query;
+  const { status, paymentStatus, search } = req.query;
   const filter = {};
   if (status) filter.bookingStatus = status;
   if (paymentStatus) filter.paymentStatus = paymentStatus;
+
+  if (search?.trim()) {
+    const regex = { $regex: search.trim(), $options: 'i' };
+    const [userIds, serviceIds] = await Promise.all([
+      User.find({ $or: [{ name: regex }, { email: regex }, { phone: regex }] }).distinct('_id'),
+      Service.find({ name: regex }).distinct('_id'),
+    ]);
+    const searchOr = [{ bookingTime: regex }, { specialRequest: regex }];
+    if (userIds.length) searchOr.push({ userId: { $in: userIds } });
+    if (serviceIds.length) searchOr.push({ services: { $in: serviceIds } });
+    filter.$or = searchOr;
+  }
 
   const bookings = await Booking.find(filter)
     .populate('userId', 'name email phone')
@@ -133,9 +151,76 @@ exports.updateBookingStatus = asyncHandler(async (req, res) => {
 
   await notifyBookingUpdate(booking.userId, booking, status);
 
+  await logActivity({
+    req,
+    action: 'booking.status_updated',
+    resourceType: 'booking',
+    resourceId: booking._id,
+    summary: `Booking marked as ${status}`,
+    metadata: { status, bookingId: booking._id },
+  });
+
   const populated = await booking.populate([
     { path: 'services', select: 'name price' },
     { path: 'userId', select: 'name email' },
+  ]);
+
+  res.json({ success: true, data: populated });
+});
+
+exports.rescheduleBooking = asyncHandler(async (req, res) => {
+  const { bookingDate, bookingTime } = req.body;
+  const booking = await Booking.findById(req.params.id).populate('services', 'duration name');
+
+  if (!booking) {
+    throw new ApiError(404, 'Booking not found');
+  }
+
+  if (booking.bookingStatus === 'declined') {
+    throw new ApiError(400, 'Cannot reschedule a declined booking');
+  }
+
+  const serviceIds = booking.services.map((s) => s._id);
+  const durationMinutes = await getTotalDurationForServices(serviceIds);
+  const normalizedTime = await assertSlotAvailable(
+    bookingDate,
+    bookingTime,
+    durationMinutes,
+    booking._id
+  );
+
+  const previousDate = booking.bookingDate;
+  const previousTime = booking.bookingTime;
+
+  booking.bookingDate = bookingDate;
+  booking.bookingTime = normalizedTime;
+  await booking.save();
+
+  await createNotification({
+    userId: booking.userId,
+    title: 'Booking Rescheduled',
+    message: `Your session was moved to ${normalizedTime} on ${new Date(bookingDate).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}.`,
+    type: 'booking',
+    referenceId: booking._id,
+  });
+
+  await logActivity({
+    req,
+    action: 'booking.rescheduled',
+    resourceType: 'booking',
+    resourceId: booking._id,
+    summary: `Rescheduled booking to ${normalizedTime}`,
+    metadata: {
+      previousDate,
+      previousTime,
+      bookingDate,
+      bookingTime: normalizedTime,
+    },
+  });
+
+  const populated = await booking.populate([
+    { path: 'services', select: 'name price duration' },
+    { path: 'userId', select: 'name email phone' },
   ]);
 
   res.json({ success: true, data: populated });

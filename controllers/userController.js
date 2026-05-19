@@ -1,6 +1,7 @@
 const User = require('../models/User');
 const ApiError = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
+const { logActivity } = require('../services/activityLogService');
 
 exports.getProfile = asyncHandler(async (req, res) => {
   res.json({ success: true, data: req.user });
@@ -74,8 +75,13 @@ exports.deleteMyAccount = asyncHandler(async (req, res) => {
 });
 
 exports.getAllUsers = asyncHandler(async (req, res) => {
-  const { role, page = 1, limit = 20 } = req.query;
+  const { role, search, page = 1, limit = 20 } = req.query;
   const filter = role ? { role } : {};
+
+  if (search?.trim()) {
+    const regex = { $regex: search.trim(), $options: 'i' };
+    filter.$or = [{ name: regex }, { email: regex }, { phone: regex }];
+  }
 
   const skip = (Number(page) - 1) * Number(limit);
   const [users, total] = await Promise.all([
@@ -106,10 +112,63 @@ exports.getUserById = asyncHandler(async (req, res) => {
   res.json({ success: true, data: user });
 });
 
-exports.deleteUser = asyncHandler(async (req, res) => {
-  const user = await User.findByIdAndDelete(req.params.id);
+exports.updateUserByAdmin = asyncHandler(async (req, res) => {
+  const { name, phone, role, isVerified } = req.body;
+  const user = await User.findById(req.params.id);
+
   if (!user) {
     throw new ApiError(404, 'User not found');
   }
+
+  if (user._id.toString() === req.user._id.toString() && role === 'customer') {
+    throw new ApiError(400, 'You cannot demote your own admin account');
+  }
+
+  if (name !== undefined) user.name = name;
+  if (phone !== undefined) user.phone = phone;
+  if (role !== undefined) {
+    if (!['admin', 'customer'].includes(role)) {
+      throw new ApiError(400, 'Invalid role');
+    }
+    user.role = role;
+  }
+  if (isVerified !== undefined) user.isVerified = isVerified;
+
+  await user.save();
+
+  await logActivity({
+    req,
+    action: 'user.updated',
+    resourceType: 'user',
+    resourceId: user._id,
+    summary: `Updated user ${user.email}`,
+    metadata: { role: user.role, isVerified: user.isVerified },
+  });
+
+  const safe = user.toObject();
+  delete safe.password;
+  res.json({ success: true, data: safe });
+});
+
+exports.deleteUser = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    throw new ApiError(404, 'User not found');
+  }
+
+  if (user._id.toString() === req.user._id.toString()) {
+    throw new ApiError(400, 'You cannot delete your own account from the admin panel');
+  }
+
+  await logActivity({
+    req,
+    action: 'user.deleted',
+    resourceType: 'user',
+    resourceId: user._id,
+    summary: `Deleted user ${user.email}`,
+    metadata: { role: user.role },
+  });
+
+  await user.deleteOne();
   res.json({ success: true, message: 'User deleted' });
 });

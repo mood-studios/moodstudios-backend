@@ -82,6 +82,7 @@ const initChatSocket = (io) => {
       io.to(roomId).emit('receive_message', populated);
       io.to(`user_${receiverId}`).emit('new_message_notification', {
         roomId,
+        senderId: socket.user._id.toString(),
         preview: message.trim().substring(0, 80),
       });
 

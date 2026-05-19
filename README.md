@@ -65,7 +65,7 @@ Optional integrations:
 |----------|-------------|
 | `CLOUDINARY_*` | Gallery image uploads |
 | `PAYMONGO_SECRET_KEY` | Payment intents & webhooks |
-| `FCM_SERVER_KEY` | Push notifications |
+| `FIREBASE_PROJECT_ID` + service account JSON | Push notifications (FCM HTTP v1) |
 
 Set `ALLOW_ADMIN_REGISTER=true` temporarily to create the first admin via `POST /api/auth/register` with `"role": "admin"`.
 

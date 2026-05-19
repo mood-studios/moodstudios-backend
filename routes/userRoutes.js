@@ -8,6 +8,7 @@ const {
   changePasswordRules,
   preferencesRules,
   updateProfileRules,
+  adminUpdateUserRules,
 } = require('../validators/userValidators');
 
 router.use(protect);
@@ -22,6 +23,7 @@ router.delete('/me', userController.deleteMyAccount);
 router.get('/', authorize('admin'), userController.getAllUsers);
 router.get('/customers', authorize('admin'), userController.getCustomers);
 router.get('/:id', authorize('admin'), userController.getUserById);
+router.put('/:id', authorize('admin'), adminUpdateUserRules, validate, userController.updateUserByAdmin);
 router.delete('/:id', authorize('admin'), userController.deleteUser);
 
 module.exports = router;

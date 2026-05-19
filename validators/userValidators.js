@@ -18,4 +18,12 @@ exports.preferencesRules = [
 exports.updateProfileRules = [
   body('name').optional().trim().notEmpty(),
   body('phone').optional().trim(),
+  body('fcmToken').optional().isString(),
+];
+
+exports.adminUpdateUserRules = [
+  body('name').optional().trim().notEmpty(),
+  body('phone').optional().trim(),
+  body('role').optional().isIn(['admin', 'customer']),
+  body('isVerified').optional().isBoolean(),
 ];

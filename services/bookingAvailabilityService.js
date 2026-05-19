@@ -81,7 +81,7 @@ const rangesOverlap = (startA, durationA, startB, durationB) => {
   return startA < endB && startB < endA;
 };
 
-const getBookedRangesForDate = async (date) => {
+const getBookedRangesForDate = async (date, excludeBookingId) => {
   const bookings = await Booking.find({
     bookingDate: { $gte: startOfDay(date), $lte: endOfDay(date) },
     bookingStatus: { $in: BLOCKING_STATUSES },
@@ -89,6 +89,7 @@ const getBookedRangesForDate = async (date) => {
 
   const ranges = [];
   for (const b of bookings) {
+    if (excludeBookingId && b._id.toString() === String(excludeBookingId)) continue;
     const start = parseTimeToMinutes(b.bookingTime);
     if (start === null) continue;
     const duration = await getBookingDurationMinutes(b);
@@ -126,10 +127,10 @@ const assertDateBookable = (date) => {
   }
 };
 
-exports.getAvailability = async (date, durationMinutes) => {
+exports.getAvailability = async (date, durationMinutes, excludeBookingId) => {
   assertDateBookable(date);
   const duration = Math.max(durationMinutes || 60, schedule.SLOT_INTERVAL_MINUTES);
-  const bookedRanges = await getBookedRangesForDate(date);
+  const bookedRanges = await getBookedRangesForDate(date, excludeBookingId);
   const now = new Date();
   const isToday = startOfDay(date).getTime() === startOfDay(now).getTime();
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
@@ -153,7 +154,7 @@ exports.getAvailability = async (date, durationMinutes) => {
   };
 };
 
-exports.assertSlotAvailable = async (date, bookingTime, durationMinutes) => {
+exports.assertSlotAvailable = async (date, bookingTime, durationMinutes, excludeBookingId) => {
   assertDateBookable(date);
   const startMinutes = parseTimeToMinutes(bookingTime);
   if (startMinutes === null) {
@@ -161,7 +162,7 @@ exports.assertSlotAvailable = async (date, bookingTime, durationMinutes) => {
   }
 
   const duration = Math.max(durationMinutes || 60, schedule.SLOT_INTERVAL_MINUTES);
-  const bookedRanges = await getBookedRangesForDate(date);
+  const bookedRanges = await getBookedRangesForDate(date, excludeBookingId);
 
   if (!isSlotAvailable(startMinutes, duration, bookedRanges)) {
     throw new ApiError(

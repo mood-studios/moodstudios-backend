@@ -11,6 +11,7 @@ router.use('/payments', require('./paymentRoutes'));
 router.use('/gallery', require('./galleryRoutes'));
 router.use('/chat', require('./chatRoutes'));
 router.use('/notifications', require('./notificationRoutes'));
+router.use('/activity-logs', require('./activityLogRoutes'));
 
 router.get('/health', (req, res) => {
   res.json({ success: true, message: 'Mood Studios API is running', timestamp: new Date().toISOString() });

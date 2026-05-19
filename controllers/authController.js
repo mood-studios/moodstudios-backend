@@ -3,9 +3,13 @@ const ApiError = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
 const { issueAuth, clearAuthCookie, userPayload } = require('../utils/authCookie');
 const { generateOtp, sendOtpEmail } = require('../services/emailService');
+const { verifyRecaptcha } = require('../services/recaptchaService');
+const { logActivity } = require('../services/activityLogService');
 
 exports.register = asyncHandler(async (req, res) => {
-  const { name, email, password, phone, role } = req.body;
+  const { name, email, password, phone, role, recaptchaToken } = req.body;
+
+  await verifyRecaptcha(recaptchaToken);
 
   const exists = await User.findOne({ email });
   if (exists) {
@@ -30,7 +34,7 @@ exports.register = asyncHandler(async (req, res) => {
   res.status(201).json({
     success: true,
     message: 'Registration successful. Please verify your email with the OTP sent.',
-    data: issueAuth(res, user),
+    data: { email: user.email, requiresVerification: true },
   });
 });
 
@@ -42,9 +46,38 @@ exports.login = asyncHandler(async (req, res) => {
     throw new ApiError(401, 'Invalid email or password');
   }
 
+  if (!user.isVerified) {
+    const otp = generateOtp();
+    user.otpCode = otp;
+    user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
+    await user.save();
+    await sendOtpEmail(email, otp);
+
+    return res.json({
+      success: true,
+      message: 'Please verify your email. A new code was sent.',
+      data: {
+        ...issueAuth(res, user),
+        requiresVerification: true,
+      },
+    });
+  }
+
+  const data = issueAuth(res, user);
+
+  if (user.role === 'admin') {
+    await logActivity({
+      req,
+      actor: user,
+      action: 'auth.login',
+      resourceType: 'auth',
+      summary: `Admin signed in: ${user.email}`,
+    });
+  }
+
   res.json({
     success: true,
-    data: issueAuth(res, user),
+    data,
   });
 });
 

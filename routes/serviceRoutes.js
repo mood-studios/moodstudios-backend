@@ -5,6 +5,7 @@ const { protect } = require('../middleware/auth');
 const optionalAuth = require('../middleware/optionalAuth');
 const authorize = require('../middleware/authorize');
 const validate = require('../middleware/validate');
+const upload = require('../middleware/upload');
 const { body } = require('express-validator');
 
 const serviceRules = [
@@ -19,6 +20,7 @@ router.get('/:id', serviceController.getService);
 
 router.use(protect, authorize('admin'));
 
+router.post('/upload-image', upload.single('image'), serviceController.uploadServiceImage);
 router.post('/', serviceRules, validate, serviceController.createService);
 router.put('/:id', serviceController.updateService);
 router.delete('/:id', serviceController.deleteService);

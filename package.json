@@ -8,12 +8,14 @@
     "dev": "nodemon server.js",
     "seed": "node scripts/seed.js",
     "seed:fresh": "node scripts/seed.js --fresh",
-    "seed:services": "node scripts/seed-services.js"
+    "seed:services": "node scripts/seed-services.js",
+    "test:email": "node scripts/test-sendgrid.js"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "dependencies": {
+    "@sendgrid/mail": "^8.1.6",
     "axios": "^1.7.9",
     "bcryptjs": "^2.4.3",
     "cloudinary": "^2.5.1",
@@ -23,6 +25,7 @@
     "express": "^4.21.2",
     "express-rate-limit": "^7.5.0",
     "express-validator": "^7.2.1",
+    "firebase-admin": "^13.10.0",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.9.3",

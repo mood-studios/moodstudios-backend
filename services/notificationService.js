@@ -1,7 +1,28 @@
-const axios = require('axios');
 const Notification = require('../models/Notification');
 const User = require('../models/User');
-const { FCM_ENDPOINT, isFcmConfigured } = require('../config/fcm');
+const { getMessaging, isFcmConfigured } = require('../config/fcm');
+
+const shouldSendPush = (user, type) => {
+  const prefs = user?.preferences?.notifications;
+  if (!prefs) return true;
+  switch (type) {
+    case 'booking':
+      return prefs.booking !== false;
+    case 'payment':
+      return prefs.payment !== false;
+    case 'message':
+      return prefs.messages !== false;
+    case 'marketing':
+      return prefs.marketing === true;
+    default:
+      return true;
+  }
+};
+
+const toStringData = (data) =>
+  Object.fromEntries(
+    Object.entries(data || {}).map(([key, value]) => [key, value == null ? '' : String(value)]),
+  );
 
 const createNotification = async ({ userId, title, message, type = 'general', referenceId }) => {
   const notification = await Notification.create({
@@ -12,43 +33,50 @@ const createNotification = async ({ userId, title, message, type = 'general', re
     referenceId,
   });
 
-  const user = await User.findById(userId).select('fcmToken');
-  if (user?.fcmToken) {
-    await sendPushNotification(user.fcmToken, { title, body: message, data: { type, referenceId: String(referenceId || '') } });
+  const user = await User.findById(userId).select('fcmToken preferences');
+  if (user?.fcmToken && shouldSendPush(user, type)) {
+    await sendPushNotification(user.fcmToken, {
+      title,
+      body: message,
+      data: { type, referenceId: String(referenceId || '') },
+    });
   }
 
   return notification;
 };
 
 const sendPushNotification = async (fcmToken, payload) => {
-  if (!isFcmConfigured() || !fcmToken) {
+  if (!fcmToken) {
+    return { success: false, error: 'missing_token' };
+  }
+
+  if (!isFcmConfigured()) {
     if (process.env.NODE_ENV === 'development') {
-      console.log('[MOCK FCM]', payload);
+      console.log('[MOCK FCM v1]', payload);
     }
     return { success: false, mocked: true };
   }
 
   try {
-    await axios.post(
-      FCM_ENDPOINT,
-      {
-        to: fcmToken,
-        notification: {
-          title: payload.title,
-          body: payload.body,
-        },
-        data: payload.data || {},
+    const messaging = getMessaging();
+    const messageId = await messaging.send({
+      token: fcmToken,
+      notification: {
+        title: payload.title,
+        body: payload.body,
       },
-      {
-        headers: {
-          Authorization: `key=${process.env.FCM_SERVER_KEY}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-    return { success: true };
+      data: toStringData(payload.data),
+      android: {
+        priority: 'high',
+        notification: { channelId: 'mood_studios_alerts' },
+      },
+      apns: {
+        payload: { aps: { sound: 'default' } },
+      },
+    });
+    return { success: true, messageId };
   } catch (err) {
-    console.error('FCM send failed:', err.message);
+    console.error('FCM v1 send failed:', err.message);
     return { success: false, error: err.message };
   }
 };

@@ -3,6 +3,7 @@ const Booking = require('../models/Booking');
 const ApiError = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
 const { uploadMultiple, deleteImage } = require('../services/cloudinaryService');
+const { logActivity } = require('../services/activityLogService');
 
 exports.createAlbum = asyncHandler(async (req, res) => {
   const { bookingId, albumName } = req.body;
@@ -17,6 +18,15 @@ exports.createAlbum = asyncHandler(async (req, res) => {
     albumName,
     uploadedBy: req.user._id,
     photos: [],
+  });
+
+  await logActivity({
+    req,
+    action: 'gallery.album_created',
+    resourceType: 'gallery',
+    resourceId: gallery._id,
+    summary: `Created album "${albumName}" for booking`,
+    metadata: { bookingId, albumName },
   });
 
   res.status(201).json({ success: true, data: gallery });
@@ -45,6 +55,15 @@ exports.uploadPhotos = asyncHandler(async (req, res) => {
 
   gallery.photos.push(...newPhotos);
   await gallery.save();
+
+  await logActivity({
+    req,
+    action: 'gallery.photos_uploaded',
+    resourceType: 'gallery',
+    resourceId: gallery._id,
+    summary: `Uploaded ${newPhotos.length} photo(s) to "${gallery.albumName}"`,
+    metadata: { count: newPhotos.length, bookingId: gallery.bookingId },
+  });
 
   res.json({ success: true, data: gallery });
 });
@@ -105,6 +124,14 @@ exports.deletePhoto = asyncHandler(async (req, res) => {
   gallery.photos.pull(photoId);
   await gallery.save();
 
+  await logActivity({
+    req,
+    action: 'gallery.photo_deleted',
+    resourceType: 'gallery',
+    resourceId: gallery._id,
+    summary: `Removed a photo from "${gallery.albumName}"`,
+  });
+
   res.json({ success: true, data: gallery });
 });
 
@@ -117,6 +144,14 @@ exports.deleteAlbum = asyncHandler(async (req, res) => {
   for (const photo of gallery.photos) {
     if (photo.publicId) await deleteImage(photo.publicId);
   }
+
+  await logActivity({
+    req,
+    action: 'gallery.album_deleted',
+    resourceType: 'gallery',
+    resourceId: gallery._id,
+    summary: `Deleted album "${gallery.albumName}"`,
+  });
 
   await gallery.deleteOne();
   res.json({ success: true, message: 'Album deleted' });
