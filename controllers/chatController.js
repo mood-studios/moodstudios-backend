@@ -2,11 +2,46 @@ const Chat = require('../models/Chat');
 const User = require('../models/User');
 const ApiError = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
+const { notifyNewMessage } = require('../services/notificationService');
 
 const buildRoomId = (userId1, userId2, bookingId) => {
   const sorted = [userId1.toString(), userId2.toString()].sort().join('_');
   return bookingId ? `booking_${bookingId}_${sorted}` : `chat_${sorted}`;
 };
+
+exports.sendMessage = asyncHandler(async (req, res) => {
+  const { receiverId, message, bookingId } = req.body;
+
+  if (!receiverId || !message?.trim()) {
+    throw new ApiError(400, 'receiverId and message are required');
+  }
+
+  const roomId = buildRoomId(req.user._id, receiverId, bookingId);
+
+  const chat = await Chat.create({
+    roomId,
+    senderId: req.user._id,
+    receiverId,
+    bookingId: bookingId || undefined,
+    message: message.trim(),
+  });
+
+  const populated = await chat.populate('senderId', 'name role');
+
+  const io = req.app.get('io');
+  if (io) {
+    io.to(roomId).emit('receive_message', populated);
+    io.to(`user_${receiverId}`).emit('new_message_notification', {
+      roomId,
+      senderId: req.user._id.toString(),
+      preview: message.trim().substring(0, 80),
+    });
+  }
+
+  await notifyNewMessage(receiverId, req.user.name);
+
+  res.status(201).json({ success: true, data: populated });
+});
 
 exports.getChatHistory = asyncHandler(async (req, res) => {
   const { receiverId, bookingId } = req.query;
