@@ -92,7 +92,7 @@ exports.sendMessage = asyncHandler(async (req, res) => {
     message: message.trim(),
   });
 
-  const populated = await chat.populate('senderId', 'name role');
+  const populated = await chat.populate('senderId', '_id name role');
 
   const io = req.app.get('io');
   if (io) {
@@ -129,8 +129,8 @@ exports.getChatHistory = asyncHandler(async (req, res) => {
   const filter = await historyFilterForUser(req.user, receiverId, bookingId);
 
   const messages = await Chat.find(filter)
-    .populate('senderId', 'name role')
-    .populate('receiverId', 'name role')
+    .populate('senderId', '_id name role')
+    .populate('receiverId', '_id name role')
     .sort({ createdAt: 1 })
     .limit(200);
 

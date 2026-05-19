@@ -89,7 +89,7 @@ const initChatSocket = (io) => {
         message: message.trim(),
       });
 
-      const populated = await chat.populate('senderId', 'name role');
+      const populated = await chat.populate('senderId', '_id name role');
 
       io.to(roomId).emit('receive_message', populated);
       io.to(`user_${receiverId}`).emit('new_message_notification', {
