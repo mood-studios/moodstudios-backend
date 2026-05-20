@@ -4,6 +4,7 @@ const featuredPhotoSchema = new mongoose.Schema(
   {
     url: { type: String, required: true, trim: true },
     sortOrder: { type: Number, default: 0 },
+    isVisible: { type: Boolean, default: true },
   },
   { timestamps: true }
 );

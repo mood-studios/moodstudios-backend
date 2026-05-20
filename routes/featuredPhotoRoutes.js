@@ -11,9 +11,10 @@ router.use(protect, authorize('admin'));
 router.get('/', featuredPhotoController.listFeaturedPhotos);
 router.put(
   '/',
-  [body('photos').isArray(), body('photos.*').optional().isString().trim()],
+  [body('photos').isArray()],
   validate,
   featuredPhotoController.syncFeaturedPhotos
 );
+router.patch('/:id/visibility', featuredPhotoController.toggleVisibility);
 
 module.exports = router;
