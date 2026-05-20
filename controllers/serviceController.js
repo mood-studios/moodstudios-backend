@@ -8,6 +8,65 @@ const asyncHandler = require('../utils/asyncHandler');
 const { uploadImage } = require('../services/cloudinaryService');
 const { logActivity } = require('../services/activityLogService');
 
+/** Ensure API consumers always get samplePhotos (legacy docs may only have image). */
+function enrichService(service) {
+  const doc = service.toObject ? service.toObject() : { ...service };
+  const photos = Array.isArray(doc.samplePhotos)
+    ? doc.samplePhotos.filter((url) => typeof url === 'string' && url.trim())
+    : [];
+  if (!photos.length && doc.image) {
+    doc.samplePhotos = [doc.image];
+  }
+  return doc;
+}
+
+/** Merge image + samplePhotos into one array; image is always the first photo. */
+function normalizeServicePayload(body, existing = null) {
+  const payload = {
+    name: body.name !== undefined ? body.name : existing?.name,
+    description: body.description !== undefined ? body.description : existing?.description,
+    price: body.price !== undefined ? body.price : existing?.price,
+    duration: body.duration !== undefined ? body.duration : existing?.duration,
+    category: body.category !== undefined ? body.category : existing?.category,
+  };
+
+  if (body.isVisible !== undefined) {
+    payload.isVisible = body.isVisible;
+  } else if (existing) {
+    payload.isVisible = existing.isVisible;
+  }
+
+  let fromArray;
+  if (Array.isArray(body.samplePhotos)) {
+    fromArray = body.samplePhotos.filter((url) => typeof url === 'string' && url.trim());
+  } else if (existing?.samplePhotos?.length) {
+    fromArray = [...existing.samplePhotos];
+  } else {
+    fromArray = [];
+  }
+
+  const photos = [...new Set(fromArray.map((url) => url.trim()))];
+
+  const cover =
+    typeof body.image === 'string' && body.image.trim() ? body.image.trim() : '';
+  if (cover && !photos.includes(cover)) {
+    photos.unshift(cover);
+  }
+
+  payload.samplePhotos = photos;
+  if (photos.length) {
+    payload.image = photos[0];
+  } else if (cover) {
+    payload.image = cover;
+    payload.samplePhotos = [cover];
+  } else {
+    payload.image = '';
+    payload.samplePhotos = [];
+  }
+
+  return payload;
+}
+
 const saveLocalServiceImage = async (file, req) => {
   const dir = path.join(__dirname, '../uploads/services');
   await fs.mkdir(dir, { recursive: true });
@@ -43,8 +102,38 @@ exports.uploadServiceImage = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { url: result.url } });
 });
 
+exports.uploadServiceImages = asyncHandler(async (req, res) => {
+  const files = req.files;
+  if (!files?.length) {
+    throw new ApiError(400, 'At least one image file is required');
+  }
+
+  const urls = [];
+  for (const file of files) {
+    let result;
+    if (process.env.CLOUDINARY_CLOUD_NAME) {
+      result = await uploadImage(file, 'mood-studios/services');
+    } else if (process.env.NODE_ENV === 'development') {
+      result = await saveLocalServiceImage(file, req);
+    } else {
+      throw new ApiError(503, 'Image upload is not configured. Set Cloudinary credentials.');
+    }
+    urls.push(result.url);
+  }
+
+  await logActivity({
+    req,
+    action: 'service.images_uploaded',
+    resourceType: 'service',
+    summary: `Uploaded ${urls.length} service image(s)`,
+    metadata: { count: urls.length },
+  });
+
+  res.json({ success: true, data: { urls } });
+});
+
 exports.createService = asyncHandler(async (req, res) => {
-  const service = await Service.create(req.body);
+  const service = await Service.create(normalizeServicePayload(req.body));
   const populated = await service.populate('category', 'name');
   await logActivity({
     req,
@@ -53,7 +142,7 @@ exports.createService = asyncHandler(async (req, res) => {
     resourceId: service._id,
     summary: `Created service "${service.name}"`,
   });
-  res.status(201).json({ success: true, data: populated });
+  res.status(201).json({ success: true, data: enrichService(populated) });
 });
 
 exports.getServices = asyncHandler(async (req, res) => {
@@ -77,7 +166,7 @@ exports.getServices = asyncHandler(async (req, res) => {
     .populate('category', 'name')
     .sort({ createdAt: -1 });
 
-  res.json({ success: true, data: services });
+  res.json({ success: true, data: services.map(enrichService) });
 });
 
 exports.getService = asyncHandler(async (req, res) => {
@@ -85,26 +174,30 @@ exports.getService = asyncHandler(async (req, res) => {
   if (!service) {
     throw new ApiError(404, 'Service not found');
   }
-  res.json({ success: true, data: service });
+  res.json({ success: true, data: enrichService(service) });
 });
 
 exports.updateService = asyncHandler(async (req, res) => {
-  const service = await Service.findByIdAndUpdate(req.params.id, req.body, {
-    new: true,
-    runValidators: true,
-  }).populate('category', 'name');
-
-  if (!service) {
+  const existing = await Service.findById(req.params.id);
+  if (!existing) {
     throw new ApiError(404, 'Service not found');
   }
+
+  const service = await Service.findByIdAndUpdate(
+    req.params.id,
+    normalizeServicePayload(req.body, existing),
+    { new: true, runValidators: true }
+  ).populate('category', 'name');
+
   await logActivity({
     req,
     action: 'service.updated',
     resourceType: 'service',
     resourceId: service._id,
     summary: `Updated service "${service.name}"`,
+    metadata: { samplePhotoCount: service.samplePhotos?.length || 0 },
   });
-  res.json({ success: true, data: service });
+  res.json({ success: true, data: enrichService(service) });
 });
 
 exports.deleteService = asyncHandler(async (req, res) => {

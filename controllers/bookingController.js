@@ -64,7 +64,7 @@ exports.createBooking = asyncHandler(async (req, res) => {
 
 exports.getMyBookings = asyncHandler(async (req, res) => {
   const bookings = await Booking.find({ userId: req.user._id })
-    .populate('services', 'name price duration image description')
+    .populate('services', 'name price duration image samplePhotos description')
     .sort({ createdAt: -1 });
 
   const needsSync = bookings.filter((b) => b.paymentStatus !== 'paid');
@@ -108,7 +108,7 @@ exports.getAllBookings = asyncHandler(async (req, res) => {
 
   const bookings = await Booking.find(filter)
     .populate('userId', 'name email phone')
-    .populate('services', 'name price duration')
+    .populate('services', 'name price duration image samplePhotos')
     .sort({ createdAt: -1 });
 
   res.json({ success: true, data: bookings });
@@ -117,7 +117,7 @@ exports.getAllBookings = asyncHandler(async (req, res) => {
 exports.getBooking = asyncHandler(async (req, res) => {
   const booking = await Booking.findById(req.params.id)
     .populate('userId', 'name email phone')
-    .populate('services', 'name price duration image description');
+    .populate('services', 'name price duration image samplePhotos description');
 
   if (!booking) {
     throw new ApiError(404, 'Booking not found');

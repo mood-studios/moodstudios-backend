@@ -12,6 +12,7 @@ const serviceSchema = new mongoose.Schema(
       required: true,
     },
     image: { type: String },
+    samplePhotos: { type: [String], default: [] },
     isVisible: { type: Boolean, default: true },
   },
   { timestamps: true }

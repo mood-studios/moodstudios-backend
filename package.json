@@ -9,6 +9,7 @@
     "seed": "node scripts/seed.js",
     "seed:fresh": "node scripts/seed.js --fresh",
     "seed:services": "node scripts/seed-services.js",
+    "migrate:service-photos": "node scripts/migrate-service-photos.js",
     "test:email": "node scripts/test-sendgrid.js"
   },
   "engines": {

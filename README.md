@@ -113,11 +113,26 @@ Base URL: `/api`
 |--------|----------|--------|-------------|
 | GET | `/categories` | Public | List categories |
 | POST | `/categories` | Admin | Create category |
-| GET | `/services` | Public | List visible services |
+| GET | `/services` | Public | List visible services (includes `samplePhotos`) |
+| GET | `/services/:id` | Public | Single service |
 | POST | `/services` | Admin | Create service |
+| PUT | `/services/:id` | Admin | Update service |
+| DELETE | `/services/:id` | Admin | Delete service |
+| POST | `/services/upload-image` | Admin | Upload one image (`multipart/form-data`, field: `image`) |
+| POST | `/services/upload-images` | Admin | Upload up to 20 images (field: `images`) |
 | PATCH | `/services/:id/visibility` | Admin | Toggle visibility |
 
 Filter services: `GET /services?category=<categoryId>`
+
+**Service photos:** Store multiple URLs in `samplePhotos` (array). `image` is the cover (first photo). On create/update, send both or only `samplePhotos`; the API merges them and keeps `image` in sync.
+
+```json
+{
+  "name": "Kiddie Shoot",
+  "samplePhotos": ["https://…/a.jpg", "https://…/b.jpg"],
+  "image": "https://…/a.jpg"
+}
+```
 
 ### Bookings
 
