@@ -15,7 +15,7 @@ Production-ready REST API for photography booking, client management, payments, 
 ## Quick Start
 
 ```bash
-cd backend
+cd folderName
 cp .env.example .env
 # remove .env and then paste local .env with your credentials
 npm install
