@@ -5,6 +5,7 @@ router.use('/public', require('./publicRoutes'));
 router.use('/auth', require('./authRoutes'));
 router.use('/users', require('./userRoutes'));
 router.use('/categories', require('./categoryRoutes'));
+router.use('/featured-photos', require('./featuredPhotoRoutes'));
 router.use('/services', require('./serviceRoutes'));
 router.use('/bookings', require('./bookingRoutes'));
 router.use('/payments', require('./paymentRoutes'));
