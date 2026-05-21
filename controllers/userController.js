@@ -99,6 +99,37 @@ exports.getAllUsers = asyncHandler(async (req, res) => {
   });
 });
 
+exports.createCustomerByAdmin = asyncHandler(async (req, res) => {
+  const { name, email, password, phone } = req.body;
+
+  const existing = await User.findOne({ email });
+  if (existing) {
+    throw new ApiError(400, 'Email already registered');
+  }
+
+  const user = await User.create({
+    name,
+    email,
+    password,
+    phone: phone || '',
+    role: 'customer',
+    isVerified: true,
+  });
+
+  await logActivity({
+    req,
+    action: 'user.created',
+    resourceType: 'user',
+    resourceId: user._id,
+    summary: `Admin created customer ${user.email}`,
+    metadata: { role: 'customer' },
+  });
+
+  const safe = user.toObject();
+  delete safe.password;
+  res.status(201).json({ success: true, data: safe });
+});
+
 exports.getCustomers = asyncHandler(async (req, res) => {
   const customers = await User.find({ role: 'customer' })
     .select('-password')

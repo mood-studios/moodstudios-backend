@@ -9,6 +9,7 @@ const {
   preferencesRules,
   updateProfileRules,
   adminUpdateUserRules,
+  adminCreateCustomerRules,
 } = require('../validators/userValidators');
 
 router.use(protect);
@@ -21,6 +22,13 @@ router.put('/change-password', changePasswordRules, validate, userController.cha
 router.delete('/me', userController.deleteMyAccount);
 
 router.get('/', authorize('admin'), userController.getAllUsers);
+router.post(
+  '/customers',
+  authorize('admin'),
+  adminCreateCustomerRules,
+  validate,
+  userController.createCustomerByAdmin
+);
 router.get('/customers', authorize('admin'), userController.getCustomers);
 router.get('/:id', authorize('admin'), userController.getUserById);
 router.put('/:id', authorize('admin'), adminUpdateUserRules, validate, userController.updateUserByAdmin);

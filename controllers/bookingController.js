@@ -88,11 +88,41 @@ exports.getMyBookings = asyncHandler(async (req, res) => {
   res.json({ success: true, data: bookings });
 });
 
+function bookingDateRangeFilter(date, dateFrom, dateTo) {
+  const day = (value) => {
+    if (!value || typeof value !== 'string') return null;
+    const match = value.trim().match(/^\d{4}-\d{2}-\d{2}$/);
+    if (!match) return null;
+    return new Date(`${match[0]}T00:00:00.000Z`);
+  };
+
+  const single = day(date);
+  if (single) {
+    const end = new Date(single);
+    end.setUTCDate(end.getUTCDate() + 1);
+    return { $gte: single, $lt: end };
+  }
+
+  const range = {};
+  const from = day(dateFrom);
+  const to = day(dateTo);
+  if (from) range.$gte = from;
+  if (to) {
+    const end = new Date(to);
+    end.setUTCDate(end.getUTCDate() + 1);
+    range.$lt = end;
+  }
+  return Object.keys(range).length ? range : null;
+}
+
 exports.getAllBookings = asyncHandler(async (req, res) => {
-  const { status, paymentStatus, search } = req.query;
+  const { status, paymentStatus, search, date, dateFrom, dateTo } = req.query;
   const filter = {};
   if (status) filter.bookingStatus = status;
   if (paymentStatus) filter.paymentStatus = paymentStatus;
+
+  const bookingDateFilter = bookingDateRangeFilter(date, dateFrom, dateTo);
+  if (bookingDateFilter) filter.bookingDate = bookingDateFilter;
 
   if (search?.trim()) {
     const regex = { $regex: search.trim(), $options: 'i' };
