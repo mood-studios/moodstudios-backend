@@ -2,7 +2,7 @@ const jwt = require('jsonwebtoken');
 const Chat = require('../models/Chat');
 const User = require('../models/User');
 const { COOKIE_NAME } = require('../utils/authCookie');
-const { buildRoomId } = require('../controllers/chatController');
+const { buildRoomId, broadcastAdminInboxCount } = require('../controllers/chatController');
 const { notifyNewMessage } = require('../services/notificationService');
 
 const readTokenFromHandshake = (socket) => {
@@ -99,6 +99,10 @@ const initChatSocket = (io) => {
       });
 
       await notifyNewMessage(receiverId, socket.user.name);
+
+      if (socket.user.role === 'customer') {
+        await broadcastAdminInboxCount(io);
+      }
     });
 
     socket.on('typing', ({ receiverId, bookingId, isTyping }) => {

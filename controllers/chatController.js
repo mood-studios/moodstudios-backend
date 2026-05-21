@@ -7,6 +7,37 @@ const { notifyNewMessage } = require('../services/notificationService');
 
 const getAdminIds = () => User.find({ role: 'admin' }).distinct('_id');
 
+const getCustomerIds = () => User.find({ role: 'customer' }).distinct('_id');
+
+/** Distinct customers who have unread messages to the studio inbox. */
+const countAdminUnreadConversations = async () => {
+  const [adminIds, customerIds] = await Promise.all([getAdminIds(), getCustomerIds()]);
+  if (!adminIds.length || !customerIds.length) return 0;
+
+  const result = await Chat.aggregate([
+    {
+      $match: {
+        senderId: { $in: customerIds },
+        receiverId: { $in: adminIds },
+        read: false,
+      },
+    },
+    { $group: { _id: '$senderId' } },
+    { $count: 'count' },
+  ]);
+
+  return result[0]?.count || 0;
+};
+
+const broadcastAdminInboxCount = async (io) => {
+  if (!io) return;
+  const count = await countAdminUnreadConversations();
+  const admins = await User.find({ role: 'admin' }).select('_id').lean();
+  for (const admin of admins) {
+    io.to(`user_${admin._id}`).emit('admin_inbox_count', { count });
+  }
+};
+
 /**
  * Studio inbox: one thread per customer for all admins (not per admin user).
  */
@@ -106,6 +137,10 @@ exports.sendMessage = asyncHandler(async (req, res) => {
 
   await notifyNewMessage(receiverId, req.user.name);
 
+  if (req.user.role === 'customer' && io) {
+    await broadcastAdminInboxCount(io);
+  }
+
   res.status(201).json({ success: true, data: populated });
 });
 
@@ -167,12 +202,46 @@ exports.getMyConversations = asyncHandler(async (req, res) => {
 exports.markAsRead = asyncHandler(async (req, res) => {
   const { roomId } = req.body;
 
-  await Chat.updateMany(
-    { roomId, receiverId: req.user._id, read: false },
-    { read: true }
-  );
+  if (!roomId) {
+    throw new ApiError(400, 'roomId is required');
+  }
 
-  res.json({ success: true, message: 'Messages marked as read' });
+  if (req.user.role === 'admin') {
+    const [adminIds, customerIds] = await Promise.all([getAdminIds(), getCustomerIds()]);
+    await Chat.updateMany(
+      {
+        roomId,
+        senderId: { $in: customerIds },
+        receiverId: { $in: adminIds },
+        read: false,
+      },
+      { read: true }
+    );
+  } else {
+    await Chat.updateMany(
+      { roomId, receiverId: req.user._id, read: false },
+      { read: true }
+    );
+  }
+
+  const io = req.app.get('io');
+  if (req.user.role === 'admin') {
+    await broadcastAdminInboxCount(io);
+  }
+
+  const count =
+    req.user.role === 'admin' ? await countAdminUnreadConversations() : undefined;
+
+  res.json({
+    success: true,
+    message: 'Messages marked as read',
+    data: count !== undefined ? { conversationCount: count } : undefined,
+  });
+});
+
+exports.getAdminInboxStats = asyncHandler(async (req, res) => {
+  const conversationCount = await countAdminUnreadConversations();
+  res.json({ success: true, data: { conversationCount } });
 });
 
 exports.getAdminChatPartners = asyncHandler(async (req, res) => {
@@ -189,3 +258,5 @@ exports.getStudioContact = asyncHandler(async (req, res) => {
 });
 
 module.exports.buildRoomId = buildRoomId;
+module.exports.countAdminUnreadConversations = countAdminUnreadConversations;
+module.exports.broadcastAdminInboxCount = broadcastAdminInboxCount;

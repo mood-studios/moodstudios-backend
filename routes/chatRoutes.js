@@ -12,5 +12,6 @@ router.post('/messages', chatController.sendMessage);
 router.get('/conversations', chatController.getMyConversations);
 router.patch('/read', chatController.markAsRead);
 router.get('/partners', authorize('admin'), chatController.getAdminChatPartners);
+router.get('/inbox-stats', authorize('admin'), chatController.getAdminInboxStats);
 
 module.exports = router;

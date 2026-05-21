@@ -11,6 +11,7 @@ const { body } = require('express-validator');
 router.use(protect);
 
 router.get('/booking/:bookingId', galleryController.getGalleryByBooking);
+router.get('/:id/download', galleryController.downloadAlbum);
 router.get('/:id', galleryController.getAlbum);
 
 router.post('/', authorize('admin'), [body('bookingId').isMongoId(), body('albumName').trim().notEmpty()], validate, galleryController.createAlbum);
@@ -22,6 +23,6 @@ router.post(
   galleryController.uploadPhotos
 );
 router.delete('/:id/photos/:photoId', authorize('admin'), galleryController.deletePhoto);
-router.delete('/:id', authorize('admin'), galleryController.deleteAlbum);
+router.delete('/:id', galleryController.deleteAlbum);
 
 module.exports = router;
