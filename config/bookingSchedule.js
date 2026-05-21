@@ -4,7 +4,7 @@
  */
 module.exports = {
   OPEN_HOUR: 9,
-  CLOSE_HOUR: 18,
+  CLOSE_HOUR: 17,
   SLOT_INTERVAL_MINUTES: 30,
   MAX_BOOKINGS_PER_SLOT: 1,
   // Days closed: 0 = Sunday, 6 = Saturday

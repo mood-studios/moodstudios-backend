@@ -5,7 +5,13 @@ const authController = require('../controllers/authController');
 const validate = require('../middleware/validate');
 const { protect } = require('../middleware/auth');
 const { authLimiter, otpLimiter } = require('../middleware/rateLimit');
-const { registerRules, loginRules, otpRules } = require('../validators/authValidators');
+const {
+  registerRules,
+  loginRules,
+  otpRules,
+  forgotPasswordSendRules,
+  forgotPasswordResetRules,
+} = require('../validators/authValidators');
 
 router.post(
   '/send-signup-otp',
@@ -17,6 +23,20 @@ router.post(
 router.post('/verify-signup-otp', otpLimiter, otpRules, validate, authController.verifySignupOtp);
 router.post('/register', authLimiter, registerRules, validate, authController.register);
 router.post('/login', authLimiter, loginRules, validate, authController.login);
+router.post(
+  '/forgot-password/send-otp',
+  otpLimiter,
+  forgotPasswordSendRules,
+  validate,
+  authController.sendForgotPasswordOtp
+);
+router.post(
+  '/forgot-password/reset',
+  authLimiter,
+  forgotPasswordResetRules,
+  validate,
+  authController.resetForgotPassword
+);
 router.post('/verify-otp', otpLimiter, otpRules, validate, authController.verifyOtp);
 router.get('/me', protect, authController.me);
 router.post('/logout', authController.logout);

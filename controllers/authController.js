@@ -180,6 +180,60 @@ exports.logout = asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'Logged out' });
 });
 
+const forgotPasswordSuccessMessage =
+  'If an account exists for this email, a reset code has been sent.';
+
+exports.sendForgotPasswordOtp = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+
+  const user = await User.findOne({ email, isVerified: true }).select('+otpCode +otpExpires');
+  if (user) {
+    const otp = generateOtp();
+    assignOtp(user, otp);
+    await user.save();
+    await sendOtpEmail(email, otp, { purpose: 'reset' });
+
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[dev] Password reset OTP for ${email}: ${otp}`);
+    }
+  }
+
+  res.json({
+    success: true,
+    message: forgotPasswordSuccessMessage,
+  });
+});
+
+exports.resetForgotPassword = asyncHandler(async (req, res) => {
+  const { email, otp, password } = req.body;
+  const code = String(otp).trim().replace(/\D/g, '');
+
+  const user = await User.findOne({ email, isVerified: true }).select(
+    '+password +otpCode +otpExpires'
+  );
+  if (!user) {
+    throw new ApiError(400, 'Invalid or expired reset code');
+  }
+
+  if (!user.otpCode || isOtpExpired(user)) {
+    throw new ApiError(400, 'Reset code expired. Request a new one.');
+  }
+
+  if (user.otpCode !== code) {
+    throw new ApiError(400, 'Invalid reset code');
+  }
+
+  user.password = password;
+  user.otpCode = undefined;
+  user.otpExpires = undefined;
+  await user.save();
+
+  res.json({
+    success: true,
+    message: 'Password updated. You can log in with your new password.',
+  });
+});
+
 exports.resendOtp = asyncHandler(async (req, res) => {
   const { email } = req.body;
 
