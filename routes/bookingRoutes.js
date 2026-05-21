@@ -4,12 +4,19 @@ const bookingController = require('../controllers/bookingController');
 const { protect } = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
 const validate = require('../middleware/validate');
-const { createBookingRules } = require('../validators/bookingValidators');
+const { createBookingRules, adminCreateBookingRules } = require('../validators/bookingValidators');
 const { body } = require('express-validator');
 
 router.use(protect);
 
 router.get('/availability', authorize('admin', 'customer'), bookingController.getAvailability);
+router.post(
+  '/admin',
+  authorize('admin'),
+  adminCreateBookingRules,
+  validate,
+  bookingController.createBookingForCustomer
+);
 router.post('/', authorize('customer'), createBookingRules, validate, bookingController.createBooking);
 router.get('/my', authorize('customer'), bookingController.getMyBookings);
 router.get('/', authorize('admin'), bookingController.getAllBookings);

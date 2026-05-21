@@ -1,4 +1,5 @@
 const Booking = require('../models/Booking');
+const BlockedDay = require('../models/BlockedDay');
 const Service = require('../models/Service');
 const ApiError = require('../utils/ApiError');
 const schedule = require('../config/bookingSchedule');
@@ -116,7 +117,7 @@ const isSlotAvailable = (slotStartMinutes, durationMinutes, bookedRanges) => {
   return true;
 };
 
-const assertDateBookable = (date) => {
+const assertDateBookable = async (date) => {
   const day = startOfDay(date);
   const today = startOfDay(new Date());
   if (day < today) {
@@ -125,10 +126,14 @@ const assertDateBookable = (date) => {
   if (schedule.CLOSED_WEEKDAYS.includes(day.getDay())) {
     throw new ApiError(400, 'Studio is closed on this day');
   }
+  const blocked = await BlockedDay.findOne({ date: day });
+  if (blocked) {
+    throw new ApiError(400, 'This date is blocked and not available for booking');
+  }
 };
 
 exports.getAvailability = async (date, durationMinutes, excludeBookingId) => {
-  assertDateBookable(date);
+  await assertDateBookable(date);
   const duration = Math.max(durationMinutes || 60, schedule.SLOT_INTERVAL_MINUTES);
   const bookedRanges = await getBookedRangesForDate(date, excludeBookingId);
   const now = new Date();
@@ -155,7 +160,7 @@ exports.getAvailability = async (date, durationMinutes, excludeBookingId) => {
 };
 
 exports.assertSlotAvailable = async (date, bookingTime, durationMinutes, excludeBookingId) => {
-  assertDateBookable(date);
+  await assertDateBookable(date);
   const startMinutes = parseTimeToMinutes(bookingTime);
   if (startMinutes === null) {
     throw new ApiError(400, 'Invalid booking time format');

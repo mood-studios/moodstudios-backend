@@ -10,6 +10,12 @@ const {
   retrievePaymentLink,
 } = require('../services/paymentService');
 const { notifyPaymentStatus } = require('../services/notificationService');
+const {
+  isPaymentWindowExpired,
+  getPaymentDeadline,
+  getCombinedPaymentDeadline,
+  PENDING_PAYMENT_MINUTES,
+} = require('../config/bookingPayment');
 
 const getBookingIdsForPayment = (payment) => {
   const ids = payment.metadata?.bookingIds;
@@ -46,6 +52,10 @@ const buildCombinedPaymentResponse = async (payment, extras) => {
     }
   }
 
+  const bookingIds = getBookingIdsForPayment(payment);
+  const paymentDeadlineAt =
+    extras.paymentDeadlineAt || (await getCombinedPaymentDeadline(bookingIds));
+
   return {
     payment,
     clientKey: payment.paymongoClientKey,
@@ -54,7 +64,9 @@ const buildCombinedPaymentResponse = async (payment, extras) => {
     amount: payment.amount,
     isTestMode: extras.isTestMode,
     linkError: extras.linkError,
-    bookingIds: getBookingIdsForPayment(payment),
+    bookingIds,
+    paymentDeadlineAt,
+    paymentHoldMinutes: extras.paymentHoldMinutes,
   };
 };
 
@@ -153,6 +165,10 @@ exports.createPayment = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'This booking was cancelled and can no longer be paid');
   }
 
+  if (isPaymentWindowExpired(booking)) {
+    throw new ApiError(400, 'Payment time has expired. Please book again.');
+  }
+
   const existing = await Payment.findOne({
     bookingId,
     status: { $in: ['pending', 'succeeded'] },
@@ -196,6 +212,8 @@ exports.createPayment = asyncHandler(async (req, res) => {
       isTestMode,
       linkError,
       bookingIds: [String(booking._id)],
+      paymentDeadlineAt: getPaymentDeadline(booking.createdAt).toISOString(),
+      paymentHoldMinutes: PENDING_PAYMENT_MINUTES,
     },
   });
 });
@@ -216,6 +234,12 @@ exports.createCombinedPayment = asyncHandler(async (req, res) => {
     }
     if (booking.paymentStatus === 'paid') {
       throw new ApiError(400, 'One or more bookings are already paid');
+    }
+    if (booking.bookingStatus === 'declined') {
+      throw new ApiError(400, 'One or more bookings were cancelled');
+    }
+    if (isPaymentWindowExpired(booking)) {
+      throw new ApiError(400, 'Payment time has expired for one or more bookings. Please book again.');
     }
     totalAmount += booking.totalAmount;
   }
@@ -271,12 +295,16 @@ exports.createCombinedPayment = asyncHandler(async (req, res) => {
     { paymentStatus: 'pending' }
   );
 
+  const paymentDeadlineAt = await getCombinedPaymentDeadline(bookingIds);
+
   res.status(201).json({
     success: true,
     data: await buildCombinedPaymentResponse(payment, {
       checkoutUrl,
       isTestMode,
       linkError,
+      paymentDeadlineAt,
+      paymentHoldMinutes: PENDING_PAYMENT_MINUTES,
     }),
   });
 });

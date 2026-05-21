@@ -1,26 +1,19 @@
 const Booking = require('../models/Booking');
 const Payment = require('../models/Payment');
 const Notification = require('../models/Notification');
+const { PENDING_PAYMENT_MINUTES, PENDING_PAYMENT_MS } = require('../config/bookingPayment');
 
-/** Cancel unpaid bookings after this many hours. */
-const PENDING_PAYMENT_EXPIRY_HOURS = 24;
-
-/** How often the server checks for expired bookings (15 minutes). */
-const EXPIRED_BOOKING_CHECK_INTERVAL_MS = 900000;
+/** Check for expired unpaid bookings every minute (15-minute payment window). */
+const EXPIRED_BOOKING_CHECK_INTERVAL_MS = 60 * 1000;
 
 let expiryRunning = false;
 
-function getExpiryHours() {
-  return PENDING_PAYMENT_EXPIRY_HOURS;
-}
-
 function getExpiryCutoff() {
-  return new Date(Date.now() - PENDING_PAYMENT_EXPIRY_HOURS * 60 * 60 * 1000);
+  return new Date(Date.now() - PENDING_PAYMENT_MS);
 }
 
 /**
- * Decline bookings that were never paid within the expiry window.
- * Runs only from the background job (not on every API request).
+ * Decline bookings that were never paid within the payment window.
  */
 async function expireUnpaidBookings() {
   if (expiryRunning) {
@@ -55,8 +48,7 @@ async function expireUnpaidBookings() {
       { $set: { status: 'cancelled' } }
     );
 
-    const hours = getExpiryHours();
-    const message = `Your booking was automatically cancelled because payment was not completed within ${hours} hour${hours === 1 ? '' : 's'}.`;
+    const message = `Your booking was automatically cancelled because payment was not completed within ${PENDING_PAYMENT_MINUTES} minutes.`;
 
     await Notification.insertMany(
       bookings.map((b) => ({
@@ -80,7 +72,7 @@ function startExpiredBookingJob() {
       const { expired, skipped } = await expireUnpaidBookings();
       if (expired > 0) {
         console.log(
-          `[bookings] Auto-cancelled ${expired} booking(s) (unpaid > ${getExpiryHours()}h)`
+          `[bookings] Auto-cancelled ${expired} booking(s) (unpaid > ${PENDING_PAYMENT_MINUTES} min)`
         );
       } else if (skipped) {
         console.log('[bookings] Expire job skipped (already running)');
@@ -97,5 +89,5 @@ function startExpiredBookingJob() {
 module.exports = {
   expireUnpaidBookings,
   startExpiredBookingJob,
-  getExpiryHours,
+  getExpiryMinutes: () => PENDING_PAYMENT_MINUTES,
 };

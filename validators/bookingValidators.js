@@ -7,3 +7,8 @@ exports.createBookingRules = [
   body('bookingTime').trim().notEmpty().withMessage('Booking time is required'),
   body('specialRequest').optional().trim(),
 ];
+
+exports.adminCreateBookingRules = [
+  body('userId').isMongoId().withMessage('Customer is required'),
+  ...exports.createBookingRules,
+];

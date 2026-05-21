@@ -8,6 +8,7 @@ router.use('/categories', require('./categoryRoutes'));
 router.use('/featured-photos', require('./featuredPhotoRoutes'));
 router.use('/services', require('./serviceRoutes'));
 router.use('/bookings', require('./bookingRoutes'));
+router.use('/blocked-days', require('./blockedDayRoutes'));
 router.use('/payments', require('./paymentRoutes'));
 router.use('/gallery', require('./galleryRoutes'));
 router.use('/chat', require('./chatRoutes'));

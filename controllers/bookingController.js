@@ -11,6 +11,7 @@ const {
   getTotalDurationForServices,
 } = require('../services/bookingAvailabilityService');
 const { logActivity } = require('../services/activityLogService');
+const { enrichBookingForClient } = require('../config/bookingPayment');
 
 const calculateTotal = async (serviceIds) => {
   const services = await Service.find({ _id: { $in: serviceIds }, isVisible: true });
@@ -59,7 +60,62 @@ exports.createBooking = asyncHandler(async (req, res) => {
     { path: 'userId', select: 'name email phone' },
   ]);
 
-  res.status(201).json({ success: true, data: populated });
+  res.status(201).json({ success: true, data: enrichBookingForClient(populated) });
+});
+
+exports.createBookingForCustomer = asyncHandler(async (req, res) => {
+  const { userId, services, bookingDate, bookingTime, specialRequest } = req.body;
+
+  if (!services?.length) {
+    throw new ApiError(400, 'At least one service is required');
+  }
+
+  const customer = await User.findOne({ _id: userId, role: 'customer' });
+  if (!customer) {
+    throw new ApiError(404, 'Customer not found');
+  }
+
+  const totalAmount = await calculateTotal(services);
+  const durationMinutes = await getTotalDurationForServices(services);
+  const normalizedTime = await assertSlotAvailable(bookingDate, bookingTime, durationMinutes);
+
+  const booking = await Booking.create({
+    userId: customer._id,
+    services,
+    bookingDate,
+    bookingTime: normalizedTime,
+    specialRequest,
+    totalAmount,
+  });
+
+  const populated = await booking.populate([
+    { path: 'services', select: 'name price duration' },
+    { path: 'userId', select: 'name email phone' },
+  ]);
+
+  await logActivity({
+    req,
+    action: 'booking.create_admin',
+    resourceType: 'booking',
+    resourceId: booking._id,
+    summary: `Admin booked ${customer.name} for ${normalizedTime}`,
+    metadata: {
+      customerId: customer._id,
+      bookingDate,
+      bookingTime: normalizedTime,
+      totalAmount,
+    },
+  });
+
+  await createNotification({
+    userId: customer._id,
+    type: 'booking',
+    title: 'New booking',
+    message: `A booking was created for you on ${new Date(bookingDate).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })} at ${normalizedTime}.`,
+    referenceId: booking._id,
+  });
+
+  res.status(201).json({ success: true, data: enrichBookingForClient(populated) });
 });
 
 exports.getMyBookings = asyncHandler(async (req, res) => {
@@ -86,7 +142,7 @@ exports.getMyBookings = asyncHandler(async (req, res) => {
   }
 
   res.set('Cache-Control', 'no-store');
-  res.json({ success: true, data: bookings });
+  res.json({ success: true, data: bookings.map(enrichBookingForClient) });
 });
 
 function bookingDateRangeFilter(date, dateFrom, dateTo) {
@@ -161,7 +217,7 @@ exports.getBooking = asyncHandler(async (req, res) => {
     throw new ApiError(403, 'Not authorized to view this booking');
   }
 
-  res.json({ success: true, data: booking });
+  res.json({ success: true, data: enrichBookingForClient(booking) });
 });
 
 exports.updateBookingStatus = asyncHandler(async (req, res) => {
