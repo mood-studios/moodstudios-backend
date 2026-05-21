@@ -12,6 +12,7 @@ const { generalLimiter } = require('./middleware/rateLimit');
 
 const connectDB = require('./config/db');
 const { configureCloudinary } = require('./config/cloudinary');
+const { startExpiredBookingJob } = require('./services/expiredBookingService');
 const routes = require('./routes');
 const notFound = require('./middleware/notFound');
 const errorHandler = require('./middleware/errorHandler');
@@ -99,6 +100,7 @@ const PORT = process.env.PORT || 5000;
 const start = async () => {
   await connectDB();
   configureCloudinary();
+  startExpiredBookingJob();
 
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);

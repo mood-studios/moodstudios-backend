@@ -85,6 +85,7 @@ exports.getMyBookings = asyncHandler(async (req, res) => {
     }
   }
 
+  res.set('Cache-Control', 'no-store');
   res.json({ success: true, data: bookings });
 });
 
@@ -262,16 +263,38 @@ exports.cancelBooking = asyncHandler(async (req, res) => {
     throw new ApiError(404, 'Booking not found');
   }
 
-  if (booking.userId.toString() !== req.user._id.toString()) {
+  const ownerId = booking.userId._id
+    ? booking.userId._id.toString()
+    : booking.userId.toString();
+  if (ownerId !== req.user._id.toString()) {
     throw new ApiError(403, 'Not authorized');
   }
 
+  if (booking.bookingStatus === 'completed') {
+    throw new ApiError(400, 'Completed bookings cannot be cancelled');
+  }
+  if (booking.bookingStatus === 'declined') {
+    throw new ApiError(400, 'This booking is already cancelled');
+  }
   if (booking.bookingStatus !== 'pending') {
     throw new ApiError(400, 'Only pending bookings can be cancelled');
   }
 
   booking.bookingStatus = 'declined';
+  if (booking.paymentStatus === 'pending' || booking.paymentStatus === 'unpaid') {
+    booking.paymentStatus = 'failed';
+  }
   await booking.save();
 
-  res.json({ success: true, message: 'Booking cancelled', data: booking });
+  await Payment.updateMany(
+    { bookingId: booking._id, status: 'pending' },
+    { $set: { status: 'cancelled' } }
+  );
+
+  const data = await Booking.findById(booking._id)
+    .populate('services', 'name price duration image samplePhotos description')
+    .populate('userId', 'name email phone');
+
+  res.set('Cache-Control', 'no-store');
+  res.json({ success: true, message: 'Booking cancelled', data });
 });

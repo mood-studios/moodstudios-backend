@@ -149,6 +149,10 @@ exports.createPayment = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'Booking is already paid');
   }
 
+  if (booking.bookingStatus === 'declined') {
+    throw new ApiError(400, 'This booking was cancelled and can no longer be paid');
+  }
+
   const existing = await Payment.findOne({
     bookingId,
     status: { $in: ['pending', 'succeeded'] },
