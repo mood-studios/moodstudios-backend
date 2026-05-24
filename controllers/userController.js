@@ -3,6 +3,8 @@ const ApiError = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
 const { logActivity } = require('../services/activityLogService');
 
+const activeOnly = { isArchived: { $ne: true } };
+
 exports.getProfile = asyncHandler(async (req, res) => {
   res.json({ success: true, data: req.user });
 });
@@ -75,8 +77,10 @@ exports.deleteMyAccount = asyncHandler(async (req, res) => {
 });
 
 exports.getAllUsers = asyncHandler(async (req, res) => {
-  const { role, search, page = 1, limit = 20, isVerified } = req.query;
-  const filter = role ? { role } : {};
+  const { role, search, page = 1, limit = 20, isVerified, archived } = req.query;
+  const filter = archived === 'true' ? { isArchived: true } : activeOnly;
+
+  if (role) filter.role = role;
 
   if (isVerified === 'true') filter.isVerified = true;
   else if (isVerified === 'false') filter.isVerified = false;
@@ -102,7 +106,7 @@ exports.getAllUsers = asyncHandler(async (req, res) => {
 exports.createCustomerByAdmin = asyncHandler(async (req, res) => {
   const { name, email, password, phone } = req.body;
 
-  const existing = await User.findOne({ email });
+  const existing = await User.findOne({ email, ...activeOnly });
   if (existing) {
     throw new ApiError(400, 'Email already registered');
   }
@@ -131,7 +135,7 @@ exports.createCustomerByAdmin = asyncHandler(async (req, res) => {
 });
 
 exports.getCustomers = asyncHandler(async (req, res) => {
-  const customers = await User.find({ role: 'customer' })
+  const customers = await User.find({ role: 'customer', ...activeOnly })
     .select('-password')
     .sort({ createdAt: -1 });
 
@@ -191,18 +195,55 @@ exports.deleteUser = asyncHandler(async (req, res) => {
   }
 
   if (user._id.toString() === req.user._id.toString()) {
-    throw new ApiError(400, 'You cannot delete your own account from the admin panel');
+    throw new ApiError(400, 'You cannot archive your own account from the admin panel');
   }
+
+  if (user.isArchived) {
+    throw new ApiError(400, 'User is already archived');
+  }
+
+  user.isArchived = true;
+  user.archivedAt = new Date();
+  await user.save();
 
   await logActivity({
     req,
-    action: 'user.deleted',
+    action: 'user.archived',
     resourceType: 'user',
     resourceId: user._id,
-    summary: `Deleted user ${user.email}`,
+    summary: `Archived user ${user.email}`,
     metadata: { role: user.role },
   });
 
-  await user.deleteOne();
-  res.json({ success: true, message: 'User deleted' });
+  const safe = user.toObject();
+  delete safe.password;
+  res.json({ success: true, message: 'User archived', data: safe });
+});
+
+exports.restoreUser = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    throw new ApiError(404, 'User not found');
+  }
+
+  if (!user.isArchived) {
+    throw new ApiError(400, 'User is not archived');
+  }
+
+  user.isArchived = false;
+  user.archivedAt = undefined;
+  await user.save();
+
+  await logActivity({
+    req,
+    action: 'user.restored',
+    resourceType: 'user',
+    resourceId: user._id,
+    summary: `Restored user ${user.email}`,
+    metadata: { role: user.role },
+  });
+
+  const safe = user.toObject();
+  delete safe.password;
+  res.json({ success: true, message: 'User restored', data: safe });
 });

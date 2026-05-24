@@ -100,6 +100,10 @@ exports.login = asyncHandler(async (req, res) => {
     throw new ApiError(401, 'Invalid email or password');
   }
 
+  if (user.isArchived) {
+    throw new ApiError(403, 'This account has been archived. Contact the studio for help.');
+  }
+
   if (!user.isVerified) {
     let message = 'Please verify your email. Use the code we already sent.';
     if (isOtpExpired(user)) {

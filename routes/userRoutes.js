@@ -32,6 +32,7 @@ router.post(
 router.get('/customers', authorize('admin'), userController.getCustomers);
 router.get('/:id', authorize('admin'), userController.getUserById);
 router.put('/:id', authorize('admin'), adminUpdateUserRules, validate, userController.updateUserByAdmin);
+router.patch('/:id/restore', authorize('admin'), userController.restoreUser);
 router.delete('/:id', authorize('admin'), userController.deleteUser);
 
 module.exports = router;

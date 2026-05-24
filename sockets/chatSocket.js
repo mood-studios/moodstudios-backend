@@ -40,6 +40,9 @@ const authenticateSocket = async (socket, next) => {
     if (!user) {
       return next(new Error('User not found'));
     }
+    if (user.isArchived) {
+      return next(new Error('Account archived'));
+    }
 
     socket.user = user;
     next();

@@ -70,7 +70,7 @@ exports.createBookingForCustomer = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'At least one service is required');
   }
 
-  const customer = await User.findOne({ _id: userId, role: 'customer' });
+  const customer = await User.findOne({ _id: userId, role: 'customer', isArchived: { $ne: true } });
   if (!customer) {
     throw new ApiError(404, 'Customer not found');
   }

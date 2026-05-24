@@ -18,6 +18,10 @@ const protect = asyncHandler(async (req, res, next) => {
     throw new ApiError(401, 'User no longer exists');
   }
 
+  if (user.isArchived) {
+    throw new ApiError(403, 'This account has been archived');
+  }
+
   if (user.role === 'customer' && !user.isVerified) {
     throw new ApiError(403, 'Please verify your email before continuing');
   }

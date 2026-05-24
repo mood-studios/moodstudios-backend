@@ -245,7 +245,7 @@ exports.getAdminInboxStats = asyncHandler(async (req, res) => {
 });
 
 exports.getAdminChatPartners = asyncHandler(async (req, res) => {
-  const customers = await User.find({ role: 'customer' }).select('name email');
+  const customers = await User.find({ role: 'customer', isArchived: { $ne: true } }).select('name email');
   res.json({ success: true, data: customers });
 });
 
