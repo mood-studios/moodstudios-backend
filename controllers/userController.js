@@ -72,7 +72,23 @@ exports.deleteMyAccount = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'Password is required to delete your account');
   }
 
-  await user.deleteOne();
+  if (user.isArchived) {
+    return res.json({ success: true, message: 'Account deleted successfully' });
+  }
+
+  user.isArchived = true;
+  user.archivedAt = new Date();
+  await user.save();
+
+  await logActivity({
+    req,
+    action: 'user.self_archived',
+    resourceType: 'user',
+    resourceId: user._id,
+    summary: `${user.email} deleted their own account`,
+    metadata: { role: user.role, self: true },
+  });
+
   res.json({ success: true, message: 'Account deleted successfully' });
 });
 
