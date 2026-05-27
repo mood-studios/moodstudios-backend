@@ -14,11 +14,21 @@ const parsePositiveInt = (envKey, fallback) => {
 
 const windowMs = parsePositiveInt('RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000);
 
-/** Paths that should not count toward rate limits (webhooks, health probes). */
+/** Paths that should not count toward rate limits (webhooks, health probes, low-cost polls). */
+const POLL_SKIP_PATTERNS = [
+  '/chat/messages/',
+  '/chat/unread',
+  '/notifications/unread',
+  '/booking-drafts/me',
+];
+
 const shouldSkip = (req) => {
   const path = req.originalUrl || req.url || req.path || '';
   if (path === '/api/health' || path.endsWith('/health')) return true;
   if (path.includes('/payments/webhook')) return true;
+  if (req.method === 'GET' && POLL_SKIP_PATTERNS.some((p) => path.includes(p))) {
+    return true;
+  }
   return false;
 };
 
@@ -35,25 +45,25 @@ const createLimiter = ({ max, skipSuccessfulRequests = false }) =>
     },
   });
 
-/** General API traffic (all routes). */
+/** General API traffic (all routes). Generous so busy admin sessions don't trip it. */
 const generalLimiter = createLimiter({
-  max: parsePositiveInt('RATE_LIMIT_MAX', 200),
+  max: parsePositiveInt('RATE_LIMIT_MAX', 1000),
 });
 
 /** Login, register — brute-force protection. */
 const authLimiter = createLimiter({
-  max: parsePositiveInt('RATE_LIMIT_AUTH_MAX', 15),
+  max: parsePositiveInt('RATE_LIMIT_AUTH_MAX', 20),
   skipSuccessfulRequests: true,
 });
 
 /** OTP send / verify / resend — tighter cap. */
 const otpLimiter = createLimiter({
-  max: parsePositiveInt('RATE_LIMIT_OTP_MAX', 8),
+  max: parsePositiveInt('RATE_LIMIT_OTP_MAX', 12),
 });
 
 /** File uploads — prevent abuse of Cloudinary/storage. */
 const uploadLimiter = createLimiter({
-  max: parsePositiveInt('RATE_LIMIT_UPLOAD_MAX', 30),
+  max: parsePositiveInt('RATE_LIMIT_UPLOAD_MAX', 60),
 });
 
 module.exports = {
